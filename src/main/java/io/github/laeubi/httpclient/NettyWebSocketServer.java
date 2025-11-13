@@ -1,5 +1,7 @@
 package io.github.laeubi.httpclient;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,6 +41,7 @@ public class NettyWebSocketServer {
 	private Channel channel;
 	private EventLoopGroup bossGroup;
 	private EventLoopGroup workerGroup;
+	private AtomicBoolean webSocketUpgradeRequested = new AtomicBoolean();
 	
 	public NettyWebSocketServer(int port) throws Exception {
 		this.port = port;
@@ -65,6 +68,9 @@ public class NettyWebSocketServer {
 							// Check if it's a WebSocket upgrade request
 							String upgrade = req.headers().get(HttpHeaderNames.UPGRADE);
 							if (upgrade != null && "websocket".equalsIgnoreCase(upgrade)) {
+								// Mark that WebSocket upgrade was requested
+								logger.info("WebSocket upgrade requested for: {} {}", req.method(), req.uri());
+								webSocketUpgradeRequested.set(true);
 								// Let it pass to WebSocket handler
 								ctx.fireChannelRead(req.retain());
 							} else {
@@ -113,6 +119,16 @@ public class NettyWebSocketServer {
 	
 	public int getPort() {
 		return port;
+	}
+	
+	public void reset() {
+		webSocketUpgradeRequested.set(false);
+	}
+	
+	public void assertWebSocketUpgrade() {
+		if (!webSocketUpgradeRequested.compareAndSet(true, false)) {
+			throw new AssertionError("WebSocket Upgrade was not performed!");
+		}
 	}
 	
 	/**
