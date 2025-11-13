@@ -71,6 +71,7 @@ public class NettyHttp2Server {
 
 	private final int port;
 	private final boolean sendGoAway;
+	private final boolean enableAlpn;
 	private Channel channel;
 	private EventLoopGroup bossGroup;
 	private EventLoopGroup workerGroup;
@@ -79,9 +80,14 @@ public class NettyHttp2Server {
 	private AtomicBoolean goawayWasSend = new AtomicBoolean();
 
 	public NettyHttp2Server(int port, boolean ssl, boolean sendGoAway) throws Exception {
+		this(port, ssl, sendGoAway, true);
+	}
+
+	public NettyHttp2Server(int port, boolean ssl, boolean sendGoAway, boolean enableAlpn) throws Exception {
 		this.port = port;
 		this.sendGoAway = sendGoAway;
-		logger.info("Starting Netty HTTP/2 server on port {} (SSL: {}, GOAWAY: {})", port, ssl, sendGoAway);
+		this.enableAlpn = enableAlpn;
+		logger.info("Starting Netty HTTP/2 server on port {} (SSL: {}, GOAWAY: {}, ALPN: {})", port, ssl, sendGoAway, enableAlpn);
 
 		bossGroup = new NioEventLoopGroup(1);
 		workerGroup = new NioEventLoopGroup();
@@ -110,35 +116,52 @@ public class NettyHttp2Server {
 
 	private void configureSsl(SocketChannel ch) throws CertificateException, SSLException {
 		SelfSignedCertificate ssc = new SelfSignedCertificate();
-		SslContext sslCtx = SslContextBuilder.forServer(ssc.certificate(), ssc.privateKey())
-				.sslProvider(SslProvider.JDK).protocols("TLSv1.2", "TLSv1.3")
-				.applicationProtocolConfig(new ApplicationProtocolConfig(ApplicationProtocolConfig.Protocol.ALPN,
-						ApplicationProtocolConfig.SelectorFailureBehavior.NO_ADVERTISE,
-						ApplicationProtocolConfig.SelectedListenerFailureBehavior.ACCEPT,
-						ApplicationProtocolNames.HTTP_2, ApplicationProtocolNames.HTTP_1_1))
-				.build();
+		
+		SslContextBuilder sslCtxBuilder = SslContextBuilder.forServer(ssc.certificate(), ssc.privateKey())
+				.sslProvider(SslProvider.JDK)
+				.protocols("TLSv1.2", "TLSv1.3");
+		
+		if (enableAlpn) {
+			// Configure ALPN for HTTP/2 negotiation
+			sslCtxBuilder.applicationProtocolConfig(new ApplicationProtocolConfig(
+					ApplicationProtocolConfig.Protocol.ALPN,
+					ApplicationProtocolConfig.SelectorFailureBehavior.NO_ADVERTISE,
+					ApplicationProtocolConfig.SelectedListenerFailureBehavior.ACCEPT,
+					ApplicationProtocolNames.HTTP_2, ApplicationProtocolNames.HTTP_1_1));
+		}
+		
+		SslContext sslCtx = sslCtxBuilder.build();
 
 		ch.pipeline().addLast(sslCtx.newHandler(ch.alloc()));
-		ch.pipeline().addLast(new ApplicationProtocolNegotiationHandler(ApplicationProtocolNames.HTTP_1_1) {
-			@Override
-			protected void configurePipeline(ChannelHandlerContext ctx, String protocol) {
-				if (ApplicationProtocolNames.HTTP_2.equals(protocol)) {
-					logger.info("ALPN negotiated HTTP/2");
-					ctx.pipeline().addLast(createHttp2Handler());
-					return;
-				}
+		
+		if (enableAlpn) {
+			ch.pipeline().addLast(new ApplicationProtocolNegotiationHandler(ApplicationProtocolNames.HTTP_1_1) {
+				@Override
+				protected void configurePipeline(ChannelHandlerContext ctx, String protocol) {
+					if (ApplicationProtocolNames.HTTP_2.equals(protocol)) {
+						logger.info("ALPN negotiated HTTP/2");
+						ctx.pipeline().addLast(createHttp2Handler());
+						return;
+					}
 
-				if (ApplicationProtocolNames.HTTP_1_1.equals(protocol)) {
-					logger.info("ALPN negotiated HTTP/1.1");
-					ctx.pipeline().addLast(new HttpServerCodec());
-					ctx.pipeline().addLast(new HttpObjectAggregator(65536));
-					ctx.pipeline().addLast(new Http1Handler());
-					return;
-				}
+					if (ApplicationProtocolNames.HTTP_1_1.equals(protocol)) {
+						logger.info("ALPN negotiated HTTP/1.1");
+						ctx.pipeline().addLast(new HttpServerCodec());
+						ctx.pipeline().addLast(new HttpObjectAggregator(65536));
+						ctx.pipeline().addLast(new Http1Handler());
+						return;
+					}
 
-				throw new IllegalStateException("Unknown protocol: " + protocol);
-			}
-		});
+					throw new IllegalStateException("Unknown protocol: " + protocol);
+				}
+			});
+		} else {
+			// Without ALPN, only HTTP/1.1 is supported over TLS
+			logger.info("ALPN disabled - using HTTP/1.1 only");
+			ch.pipeline().addLast(new HttpServerCodec());
+			ch.pipeline().addLast(new HttpObjectAggregator(65536));
+			ch.pipeline().addLast(new Http1Handler());
+		}
 	}
 
 	private void configureHttp(SocketChannel ch) {

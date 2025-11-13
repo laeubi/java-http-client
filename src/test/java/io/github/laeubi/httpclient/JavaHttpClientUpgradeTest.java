@@ -29,6 +29,7 @@ public class JavaHttpClientUpgradeTest extends JavaHttpClientBase {
 	public static void startServers() throws Exception {
 		startHttpServer();
 		startHttpsServer();
+		startHttpsServerNoAlpn();
 	}
 
 	@BeforeEach
@@ -38,6 +39,9 @@ public class JavaHttpClientUpgradeTest extends JavaHttpClientBase {
 		}
 		if (httpsServer != null) {
 			httpsServer.reset();
+		}
+		if (httpsServerNoAlpn != null) {
+			httpsServerNoAlpn.reset();
 		}
 	}
 
@@ -151,6 +155,35 @@ public class JavaHttpClientUpgradeTest extends JavaHttpClientBase {
 		assertNotNull(response.body(), "Response body should not be null");
 
 		logger.info("=== Custom SSLParameters (no ALPN) test completed successfully ===\n");
+	}
+
+	@Test
+	@DisplayName("HTTPS server without ALPN support - no HTTP/2 upgrade possible")
+	public void testHttpsServerWithoutALPN() throws Exception {
+		logger.info("\n=== Testing HTTPS server without ALPN support ===");
+
+		// Use standard httpsClient without custom SSLParameters
+		HttpClient client = httpsClient();
+
+		HttpRequest request = HttpRequest.newBuilder()
+				.uri(getHttpsUrlNoAlpn())
+				.GET()
+				.build();
+
+		logger.info("Sending HTTPS request to server without ALPN support: {}", getHttpsUrlNoAlpn());
+		HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+		logger.info("Response status: {}", response.statusCode());
+		logger.info("Response version: {}", response.version());
+		logger.info("Response body: {}", response.body());
+		assertEquals(200, response.statusCode(), "Expected 200 OK response");
+		// When server doesn't support ALPN, there is NO upgrade mechanism for HTTPS
+		// The connection must use HTTP/1.1 - HTTP/2 upgrade is only possible over cleartext HTTP
+		assertEquals(HttpClient.Version.HTTP_1_1, response.version(), 
+			"Should use HTTP/1.1 when HTTPS server doesn't support ALPN - no upgrade mechanism exists for HTTPS");
+		assertNotNull(response.body(), "Response body should not be null");
+
+		logger.info("=== HTTPS server without ALPN test completed - no HTTP/2 upgrade possible ===\n");
 	}
 
 

@@ -18,12 +18,18 @@ public class JavaHttpClientBase {
 
 	protected static NettyHttp2Server httpsServer;
 
+	protected static NettyHttp2Server httpsServerNoAlpn;
+
 	static void startHttpServer() throws Exception {
 		httpServer = new NettyHttp2Server(8080, false, false);
 	}
 
 	static void startHttpsServer() throws Exception {
 		httpsServer = new NettyHttp2Server(8433, true, true);
+	}
+
+	static void startHttpsServerNoAlpn() throws Exception {
+		httpsServerNoAlpn = new NettyHttp2Server(8434, true, false, false);
 	}
 
 	static void stopHttpServer() {
@@ -35,10 +41,18 @@ public class JavaHttpClientBase {
 			httpsServer.stop();
 			httpsServer = null;
 		}
+		if (httpsServerNoAlpn != null) {
+			httpsServerNoAlpn.stop();
+			httpsServerNoAlpn = null;
+		}
 	}
 
 	URI getHttpsUrl() {
 		return URI.create("https://localhost:" + httpsServer.getPort() + "/test");
+	}
+
+	URI getHttpsUrlNoAlpn() {
+		return URI.create("https://localhost:" + httpsServerNoAlpn.getPort() + "/test");
 	}
 
 	static URI getHttpUrl() {
