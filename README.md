@@ -19,10 +19,22 @@ This is performed in `JavaHttpClientUpgradeTest.testHttp2UpgradeOverHttp()`
 ### 2. GOAWAY Frame Handling
 Tests how the Java HTTP Client handles GOAWAY frames sent by the server, which signal connection shutdown/timeout see https://datatracker.ietf.org/doc/html/rfc7540#section-6.8
 
-### 3. Custom SSLParameters with ALPN
+### 3. Connection Reuse and GOAWAY
+Tests that connections receiving GOAWAY frames are not reused from the connection pool. Includes:
+- Connection tracking with nonces to verify connection reuse
+- Marking connections as stale and triggering GOAWAY
+- Verifying that new connections are opened after GOAWAY
+- Testing parallel requests with connection pooling
+
+Tests are in `JavaHttpClientConnectionReuseTest`:
+- `testConnectionReuseWithNonce()` - Verifies basic connection reuse
+- `testGoawayOnStaleConnectionReuse()` - Tests GOAWAY behavior
+- `testParallelRequestsWithConnectionPooling()` - Tests parallel requests
+
+### 4. Custom SSLParameters with ALPN
 Tests the behavior when custom `SSLParameters` are provided to the `HttpClient`. See the [Known Limitations](#known-limitations) section below for important findings.
 
-### 4. HTTPS without ALPN Support
+### 5. HTTPS without ALPN Support
 Tests the behavior when connecting to an HTTPS server that does not support ALPN protocol negotiation.
 
 ## Known Limitations
@@ -89,10 +101,11 @@ mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 
 ```
 ├── src/main/java/io/github/laeubi/httpclient/
-│   └── NettyHttp2Server.java          # Netty-based HTTP/2 test server
+│   └── NettyHttp2Server.java          # Netty-based HTTP/2 test server with connection tracking
 ├── src/test/java/io/github/laeubi/httpclient/
 │   ├── JavaHttpClientUpgradeTest.java # HTTP/2 upgrade and ALPN tests
 │   ├── JavaHttpClientGoawayTest.java  # GOAWAY frame handling tests
+│   ├── JavaHttpClientConnectionReuseTest.java # Connection reuse and GOAWAY tests
 │   └── JavaHttpClientBase.java        # Base test class with utilities
 ├── src/main/resources/
 │   └── simplelogger.properties        # Logging configuration

@@ -1,7 +1,10 @@
 package io.github.laeubi.httpclient;
 
 import java.security.cert.CertificateException;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import javax.net.ssl.SSLException;
 
@@ -56,6 +59,7 @@ import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslProvider;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
 import io.netty.util.AsciiString;
+import io.netty.util.AttributeKey;
 
 /**
  * Netty-based HTTP/2 server for testing HTTP client behavior with: - HTTP/2
@@ -68,6 +72,16 @@ public class NettyHttp2Server {
 	}
 
 	private static final Logger logger = LoggerFactory.getLogger(NettyHttp2Server.class);
+	
+	// Custom headers for connection tracking
+	private static final String HEADER_CONNECTION_NONCE = "x-connection-nonce";
+	private static final String HEADER_EXPECTED_NONCE = "x-expected-nonce";
+	private static final String HEADER_MARK_STALE = "x-mark-stale";
+	
+	// Attribute keys for connection tracking
+	private static final AttributeKey<String> ATTR_CONNECTION_ID = AttributeKey.valueOf("connectionId");
+	private static final AttributeKey<String> ATTR_CONNECTION_NONCE = AttributeKey.valueOf("connectionNonce");
+	private static final AttributeKey<Boolean> ATTR_CONNECTION_STALE = AttributeKey.valueOf("connectionStale");
 
 	private final int port;
 	private final boolean sendGoAway;
@@ -78,6 +92,10 @@ public class NettyHttp2Server {
 
 	private AtomicBoolean httpUpgradeRequested = new AtomicBoolean();
 	private AtomicBoolean goawayWasSend = new AtomicBoolean();
+	
+	// Connection tracking
+	private final ConcurrentHashMap<String, String> nonceToConnectionId = new ConcurrentHashMap<>();
+	private final AtomicLong connectionCounter = new AtomicLong(0);
 
 	public NettyHttp2Server(int port, boolean ssl, boolean sendGoAway) throws Exception {
 		this(port, ssl, sendGoAway, true);
@@ -112,6 +130,8 @@ public class NettyHttp2Server {
 	public void reset() {
 		httpUpgradeRequested.set(false);
 		goawayWasSend.set(false);
+		nonceToConnectionId.clear();
+		connectionCounter.set(0);
 	}
 
 	private void configureSsl(SocketChannel ch) throws CertificateException, SSLException {
@@ -248,17 +268,80 @@ public class NettyHttp2Server {
 		public Http2Handler(boolean sendGoAway) {
 			this.sendGoAway = sendGoAway;
 		}
+		
+		@Override
+		public void channelActive(ChannelHandlerContext ctx) throws Exception {
+			// Assign a unique connection ID when the channel becomes active
+			String connectionId = "conn-" + connectionCounter.incrementAndGet();
+			ctx.channel().attr(ATTR_CONNECTION_ID).set(connectionId);
+			logger.info("New connection established: {} on channel {}", connectionId, ctx.channel().id());
+			super.channelActive(ctx);
+		}
 
 		@Override
 		public void channelRead(ChannelHandlerContext ctx, Object msg) {
 			if (msg instanceof Http2HeadersFrame) {
 				Http2HeadersFrame headersFrame = (Http2HeadersFrame) msg;
+				Http2Headers requestHeaders = headersFrame.headers();
 				logger.info("Received HTTP/2 Headers on stream {}: {}", headersFrame.stream().id(),
-						headersFrame.headers());
+						requestHeaders);
 
-				// Send a response
+				// Get or create connection ID (in case channelActive wasn't called)
+				String connectionId = ctx.channel().attr(ATTR_CONNECTION_ID).get();
+				if (connectionId == null) {
+					connectionId = "conn-" + connectionCounter.incrementAndGet();
+					ctx.channel().attr(ATTR_CONNECTION_ID).set(connectionId);
+					logger.info("Connection ID created: {} on channel {}", connectionId, ctx.channel().id());
+				}
+				
+				String connectionNonce = ctx.channel().attr(ATTR_CONNECTION_NONCE).get();
+				
+				// Check if client expects a specific nonce (checking for connection reuse)
+				CharSequence expectedNonce = requestHeaders.get(HEADER_EXPECTED_NONCE);
+				boolean connectionReused = false;
+				if (expectedNonce != null && connectionNonce != null) {
+					String storedConnectionId = nonceToConnectionId.get(expectedNonce.toString());
+					connectionReused = connectionId.equals(storedConnectionId);
+					logger.info("Client expects nonce: {}, stored connectionId: {}, current: {}, reused: {}", 
+							expectedNonce, storedConnectionId, connectionId, connectionReused);
+				}
+				
+				// Check if client wants to mark connection as stale
+				CharSequence markStale = requestHeaders.get(HEADER_MARK_STALE);
+				if (markStale != null && "true".equalsIgnoreCase(markStale.toString())) {
+					ctx.channel().attr(ATTR_CONNECTION_STALE).set(true);
+					logger.info("Connection {} marked as stale", connectionId);
+				}
+				
+				// Check if connection is stale and should send GOAWAY
+				Boolean isStale = ctx.channel().attr(ATTR_CONNECTION_STALE).get();
+				boolean shouldSendGoaway = false;
+				if (isStale != null && isStale && connectionReused && !goAwaySent) {
+					shouldSendGoaway = true;
+					logger.info("Stale connection reused - will send GOAWAY");
+				}
+				
+				// Determine response status based on connection reuse when expected nonce is present
 				Http2Headers headers = new DefaultHttp2Headers();
-				headers.status("200");
+				if (expectedNonce != null) {
+					// Client is checking for connection reuse
+					if (connectionReused) {
+						headers.status("200"); // Connection was reused
+						logger.info("Responding 200 - connection was reused");
+					} else {
+						headers.status("444"); // Connection was NOT reused (new connection)
+						logger.info("Responding 444 - connection was NOT reused (new connection)");
+					}
+				} else {
+					// Normal request - generate and return a new nonce
+					connectionNonce = UUID.randomUUID().toString();
+					ctx.channel().attr(ATTR_CONNECTION_NONCE).set(connectionNonce);
+					nonceToConnectionId.put(connectionNonce, connectionId);
+					headers.status("200");
+					headers.set(HEADER_CONNECTION_NONCE, connectionNonce);
+					logger.info("Generated new nonce: {} for connection: {}", connectionNonce, connectionId);
+				}
+				
 				headers.set("content-type", "text/plain");
 
 				Http2HeadersFrame responseHeaders = new DefaultHttp2HeadersFrame(headers, false);
@@ -266,13 +349,14 @@ public class NettyHttp2Server {
 				ctx.write(responseHeaders);
 
 				// Send data
+				String responseBody = "Hello from HTTP/2 server (connection: " + connectionId + ")\n";
 				Http2DataFrame dataFrame = new DefaultHttp2DataFrame(
-						ctx.alloc().buffer().writeBytes("Hello from HTTP/2 server\n".getBytes()), true);
+						ctx.alloc().buffer().writeBytes(responseBody.getBytes()), true);
 				dataFrame.stream(headersFrame.stream());
 				ctx.write(dataFrame);
 
-				// Send GOAWAY if configured
-				if (sendGoAway && !goAwaySent) {
+				// Send GOAWAY if configured or if stale connection was reused
+				if ((sendGoAway || shouldSendGoaway) && !goAwaySent) {
 					goawayWasSend.set(true);
 					logger.info("Sending GOAWAY frame");
 					Http2GoAwayFrame goAwayFrame = new DefaultHttp2GoAwayFrame(Http2Error.NO_ERROR.code(),
