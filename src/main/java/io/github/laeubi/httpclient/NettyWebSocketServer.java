@@ -25,8 +25,8 @@ import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
-import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
 import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolConfig;
+import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 
@@ -35,6 +35,10 @@ import io.netty.handler.logging.LoggingHandler;
  */
 public class NettyWebSocketServer {
 	
+	static {
+		System.setProperty("jdk.httpclient.HttpClient.log", "all");
+	}
+
 	private static final Logger logger = LoggerFactory.getLogger(NettyWebSocketServer.class);
 	
 	private final int port;
