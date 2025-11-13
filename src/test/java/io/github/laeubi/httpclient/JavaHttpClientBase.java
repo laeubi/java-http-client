@@ -57,7 +57,7 @@ public class JavaHttpClientBase {
 				.sslContext(createTrustAllSslContext()).build();
 	}
 
-	private static SSLContext createTrustAllSslContext() throws NoSuchAlgorithmException, KeyManagementException {
+	protected static SSLContext createTrustAllSslContext() throws NoSuchAlgorithmException, KeyManagementException {
 		// Intentionally insecure for testing with self-signed certificates
 		TrustManager[] trustAllCerts = new TrustManager[] { new X509TrustManager() {
 			@Override
