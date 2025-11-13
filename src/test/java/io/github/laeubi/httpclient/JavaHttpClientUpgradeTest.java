@@ -1,14 +1,11 @@
 package io.github.laeubi.httpclient;
 
-import static io.github.laeubi.httpclient.JavaHttpClientBase.httpServer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.security.KeyManagementException;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 
 import javax.net.ssl.SSLParameters;
@@ -108,10 +105,9 @@ public class JavaHttpClientUpgradeTest extends JavaHttpClientBase {
 		logger.info("Response version: {}", response.version());
 		logger.info("Response body: {}", response.body());
 		assertEquals(200, response.statusCode(), "Expected 200 OK response");
-		// This test documents the current behavior: Even when attempting to set ALPN protocols
-		// manually in SSLParameters, the HttpClient doesn't properly negotiate HTTP/2
-		// This is a known limitation when using custom SSLParameters
-		assertEquals(HttpClient.Version.HTTP_1_1, response.version(), 
+		// This currently documents a bug in the JDK see
+		// https://github.com/laeubi/java-http-client/issues/6
+		assertEquals(HttpClient.Version.HTTP_2, response.version(),
 			"Custom SSLParameters override HttpClient's ALPN configuration, " +
 			"causing fallback to HTTP/1.1 even when protocols are explicitly set");
 		assertNotNull(response.body(), "Response body should not be null");

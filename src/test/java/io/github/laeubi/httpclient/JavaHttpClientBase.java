@@ -8,11 +8,13 @@ import java.security.cert.X509Certificate;
 import java.time.Duration;
 
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLParameters;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
 public class JavaHttpClientBase {
+	static {
+		System.out.println("JAVA Version: " + Runtime.version());
+	}
 
 	protected static NettyHttp2Server httpServer;
 
@@ -60,8 +62,8 @@ public class JavaHttpClientBase {
 	}
 
 	static HttpClient httpClient() {
-		return HttpClient.newBuilder().version(HttpClient.Version.HTTP_2)
-				.connectTimeout(Duration.ofSeconds(10)).build();
+		return HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).connectTimeout(Duration.ofSeconds(10))
+				.build();
 	}
 
 	static HttpClient httpsClient() throws NoSuchAlgorithmException, KeyManagementException {
