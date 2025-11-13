@@ -37,6 +37,17 @@ Tests the behavior when custom `SSLParameters` are provided to the `HttpClient`.
 ### 5. HTTPS without ALPN Support
 Tests the behavior when connecting to an HTTPS server that does not support ALPN protocol negotiation.
 
+### 6. WebSocket Upgrade Support
+Tests WebSocket connection support with Java HttpClient. Related to issue [JDK-8361305](https://bugs.java.com/bugdatabase/view_bug?bug_id=JDK-8361305).
+
+Tests are in `JavaHttpClientWebSocketTest`:
+- `testDirectWebSocketConnection()` - Verifies direct WebSocket connection (ws:// URI) works
+- `testWebSocketUpgradeAfterHttp2()` - Tests WebSocket connection after HTTP connection to same host
+
+The tests demonstrate that:
+- Direct WebSocket connections using `HttpClient.newWebSocketBuilder()` work correctly on `ws://` URIs
+- WebSocket upgrade behavior when HTTP/2 connections already exist to the same host
+
 ## Known Limitations
 
 ### Custom SSLParameters Interfere with HTTP/2
@@ -101,11 +112,13 @@ mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 
 ```
 ├── src/main/java/io/github/laeubi/httpclient/
-│   └── NettyHttp2Server.java          # Netty-based HTTP/2 test server with connection tracking
+│   ├── NettyHttp2Server.java          # Netty-based HTTP/2 test server with connection tracking
+│   └── NettyWebSocketServer.java      # Netty-based WebSocket test server
 ├── src/test/java/io/github/laeubi/httpclient/
 │   ├── JavaHttpClientUpgradeTest.java # HTTP/2 upgrade and ALPN tests
 │   ├── JavaHttpClientGoawayTest.java  # GOAWAY frame handling tests
 │   ├── JavaHttpClientConnectionReuseTest.java # Connection reuse and GOAWAY tests
+│   ├── JavaHttpClientWebSocketTest.java # WebSocket connection tests
 │   └── JavaHttpClientBase.java        # Base test class with utilities
 ├── src/main/resources/
 │   └── simplelogger.properties        # Logging configuration
