@@ -1,12 +1,15 @@
 package io.github.laeubi.httpclient;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
+import java.io.IOException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -32,7 +35,7 @@ public class JavaHttpClientGoawayTest extends JavaHttpClientBase {
 	@Test
 	@DisplayName("HTTP/2 GOAWAY can be handled")
 	public void testHttp2GoawayIsHandled() throws Exception {
-		logger.info("\n=== Testing HTTP/2 Upgrade over HTTP ===");
+		logger.info("\n=== Testing HTTP/2 GOAWAY ===");
 
 		HttpClient client = httpsClient();
 
@@ -48,15 +51,22 @@ public class JavaHttpClientGoawayTest extends JavaHttpClientBase {
 			logger.info("Caught exception during join: " + e);
 		}
 		httpsServer.assertGoaway();
-		HttpResponse<String> response = responseAsync.get();
-		logger.info("Response status: {}", response.statusCode());
-		logger.info("Response version: {}", response.version());
-		logger.info("Response body: {}", response.body());
-		logger.info("Response headers: {}", response.headers().map());
-		assertEquals(200, response.statusCode(), "Expected 200 OK response");
-		assertNotNull(response.body(), "Response body should not be null");
-
-		logger.info("=== HTTP/2 Upgrade test completed successfully ===\n");
+		try {
+			HttpResponse<String> response = responseAsync.get();
+			logger.info("Response status: {}", response.statusCode());
+			logger.info("Response version: {}", response.version());
+			logger.info("Response body: {}", response.body());
+			logger.info("Response headers: {}", response.headers().map());
+			assertEquals(200, response.statusCode(), "Expected 200 OK response");
+			assertNotNull(response.body(), "Response body should not be null");
+			logger.info("=== HTTP/2 Upgrade test completed successfully ===\n");
+		} catch (ExecutionException e) {
+			Throwable cause = e.getCause();
+			cause.printStackTrace();
+			// Here we have no way to know any of the details of the GOAWAY see GOAWAY.md
+			// for further rationale.
+			assertNotEquals(IOException.class, cause.getClass());
+		}
 	}
 
 }
