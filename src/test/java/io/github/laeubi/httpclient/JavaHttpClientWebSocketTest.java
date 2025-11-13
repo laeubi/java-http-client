@@ -113,7 +113,7 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 		logger.info("\n=== Testing WebSocket Upgrade after HTTP/2 Connection ===");
 		
 		// Create a combined server that supports both HTTP/2 upgrade and WebSocket on same port
-		NettyWebSocketServer combinedServer = new NettyWebSocketServer(9090);
+		NettyWebSocketServer combinedServer = new NettyWebSocketServer(9999);
 		
 		try {
 			// Create HttpClient configured for HTTP/2
@@ -125,7 +125,7 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 			// Step 1: First make a regular HTTP request which may establish HTTP/2 connection
 			// This simulates a scenario where the client has already connected to the server
 			java.net.http.HttpRequest httpRequest = java.net.http.HttpRequest.newBuilder()
-				.uri(URI.create("http://localhost:9090/websocket"))
+				.uri(URI.create("http://localhost:"+combinedServer.getPort()+"/websocket"))
 				.GET()
 				.build();
 			
@@ -142,7 +142,7 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 			// This is where JDK-8361305 issue manifests - trying to upgrade to WebSocket
 			// after HTTP/2 connection exists
 			WebSocket.Builder webSocketBuilder = client.newWebSocketBuilder();
-			URI wsUri = URI.create("ws://localhost:9090/websocket");
+			URI wsUri = URI.create("ws://localhost:" + combinedServer.getPort() + "/websocket");
 			logger.info("Step 2: Attempting WebSocket connection to same endpoint: {}", wsUri);
 			
 			CountDownLatch messageLatch = new CountDownLatch(1);
