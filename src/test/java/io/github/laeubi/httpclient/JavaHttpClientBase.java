@@ -23,7 +23,7 @@ public class JavaHttpClientBase {
 	}
 
 	static void startHttpsServer() throws Exception {
-		httpsServer = new NettyHttp2Server(8433, true, false);
+		httpsServer = new NettyHttp2Server(8433, true, true);
 	}
 
 	static void stopHttpServer() {
@@ -51,11 +51,10 @@ public class JavaHttpClientBase {
 	}
 
 	static HttpClient httpsClient() throws NoSuchAlgorithmException, KeyManagementException {
-		SSLParameters sslParameters = new SSLParameters();
-		sslParameters.setEndpointIdentificationAlgorithm(null); // Disable hostname verification
-
+		// Using a trust-all SSL context with HTTP/2
+		// The HttpClient will automatically configure ALPN protocols for HTTP/2
 		return HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).connectTimeout(Duration.ofSeconds(10))
-				.sslContext(createTrustAllSslContext()).sslParameters(sslParameters).build();
+				.sslContext(createTrustAllSslContext()).build();
 	}
 
 	private static SSLContext createTrustAllSslContext() throws NoSuchAlgorithmException, KeyManagementException {
