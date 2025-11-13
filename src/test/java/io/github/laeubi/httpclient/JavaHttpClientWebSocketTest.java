@@ -27,7 +27,7 @@ import org.slf4j.LoggerFactory;
  * 
  * This test demonstrates the issue from JDK-8361305 where:
  * - Direct WebSocket connection (ws://) works fine
- * - But WebSocket upgrade after HTTP/2 connection does NOT work
+ * - But WebSocket upgrade after HTTP connection to the same endpoint does NOT work properly
  */
 public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 
@@ -126,11 +126,11 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 			// Step 1: First make a regular HTTP request which may establish HTTP/2 connection
 			// This simulates a scenario where the client has already connected to the server
 			java.net.http.HttpRequest httpRequest = java.net.http.HttpRequest.newBuilder()
-				.uri(URI.create("http://localhost:9090/test"))
+				.uri(URI.create("http://localhost:9090/websocket"))
 				.GET()
 				.build();
 			
-			logger.info("Step 1: Making HTTP request to http://localhost:9090/test");
+			logger.info("Step 1: Making HTTP request to http://localhost:9090/websocket");
 			try {
 				java.net.http.HttpResponse<String> httpResponse = client.send(httpRequest, 
 					java.net.http.HttpResponse.BodyHandlers.ofString());
@@ -139,12 +139,12 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 				logger.info("HTTP request completed (or failed): {}", e.getMessage());
 			}
 			
-			// Step 2: Now try to establish WebSocket connection to the SAME host:port
+			// Step 2: Now try to establish WebSocket connection to the SAME endpoint
 			// This is where JDK-8361305 issue manifests - trying to upgrade to WebSocket
 			// after HTTP/2 connection exists
 			WebSocket.Builder webSocketBuilder = client.newWebSocketBuilder();
 			URI wsUri = URI.create("ws://localhost:9090/websocket");
-			logger.info("Step 2: Attempting WebSocket connection to same host: {}", wsUri);
+			logger.info("Step 2: Attempting WebSocket connection to same endpoint: {}", wsUri);
 			
 			CountDownLatch messageLatch = new CountDownLatch(1);
 			AtomicReference<String> receivedMessage = new AtomicReference<>();
@@ -193,6 +193,9 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 				boolean received = messageLatch.await(10, TimeUnit.SECONDS);
 				assertTrue(received, "Should receive echo response from WebSocket server");
 				assertEquals("Echo: Test message", receivedMessage.get(), "Should receive echoed message");
+				
+				// Assert that WebSocket upgrade was actually performed
+				combinedServer.assertWebSocketUpgrade();
 				
 				// Close the connection
 				webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "Test complete").get(5, TimeUnit.SECONDS);
