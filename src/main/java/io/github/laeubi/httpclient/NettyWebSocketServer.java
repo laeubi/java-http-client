@@ -93,7 +93,7 @@ public class NettyWebSocketServer {
 					
 					// WebSocket protocol handler
 					WebSocketServerProtocolConfig wsConfig = WebSocketServerProtocolConfig.newBuilder()
-						.websocketPath("/websocket")
+								.websocketPath("/http")
 						.checkStartsWith(true)
 						.build();
 					ch.pipeline().addLast(new WebSocketServerProtocolHandler(wsConfig));
