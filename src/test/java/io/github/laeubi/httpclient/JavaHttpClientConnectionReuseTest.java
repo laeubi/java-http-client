@@ -4,13 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.Runtime.Version;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -26,6 +26,22 @@ public class JavaHttpClientConnectionReuseTest extends JavaHttpClientBase {
 	@BeforeAll
 	public static void startServers() throws Exception {
 		startHttpsServerNoGoaway();
+		assertTrue(isGoodJavaVersion(), Runtime.version() + " is known to contain the bug");
+	}
+
+	private static boolean isGoodJavaVersion() {
+		Version version = Runtime.version();
+		int feature = version.feature();
+		if (feature >= 25) {
+			return true;
+		}
+		if (feature == 17 && version.compareTo(Version.parse("17.0.17")) >= 0) {
+			return true;
+		}
+		if (feature == 21 && version.compareTo(Version.parse("21.0.8")) >= 0) {
+			return true;
+		}
+		return false;
 	}
 
 	@AfterAll
