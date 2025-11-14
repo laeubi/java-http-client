@@ -1,14 +1,15 @@
 # Java HTTP Client Testing
 
-Check of Java HTTP Client Limitations with HTTP/2 and GOAWAY frames
+Check of Java HTTP Client Limitations with HTTP/2, GOAWAY frames, and HTTP Compression
 
 ## Overview
 
-This project tests Java 11+ HTTP Client behavior with HTTP/2 protocol features, specifically:
+This project tests Java 11+ HTTP Client behavior with HTTP/2 protocol features and HTTP compression, specifically:
 - HTTP/2 Upgrade from HTTP/1.1
 - GOAWAY frame handling
 - Connection management over HTTP and HTTPS
 - ALPN negotiation and custom SSLParameters behavior
+- HTTP compression support (or lack thereof)
 
 ## Test Scenarios
 
@@ -47,6 +48,24 @@ Tests are in `JavaHttpClientWebSocketTest`:
 The tests demonstrate that:
 - Direct WebSocket connections using `HttpClient.newWebSocketBuilder()` work correctly on `ws://` URIs
 - WebSocket upgrade behavior when HTTP/2 connections already exist to the same host
+
+### 7. HTTP Compression Support
+Tests demonstrating that Java HTTP Client does NOT support transparent HTTP compression out of the box. See [HTTP_COMPRESSION.md](HTTP_COMPRESSION.md) for detailed documentation.
+
+Tests are in `JavaHttpClientCompressionTest`:
+- `testNoAutomaticAcceptEncodingHeader()` - Verifies client does NOT add Accept-Encoding automatically (HTTP)
+- `testNoAutomaticDecompression()` - Verifies client does NOT decompress gzip responses automatically
+- `testManualCompressionRequired()` - Demonstrates manual implementation required for compression
+- `testHttpsNoAutomaticAcceptEncodingHeader()` - Verifies same behavior for HTTPS
+- `testHttpsManualCompression()` - Shows manual compression works with HTTPS
+
+The tests demonstrate that:
+- Java HTTP Client does NOT automatically add `Accept-Encoding` header
+- Java HTTP Client does NOT automatically decompress compressed responses
+- Applications must manually implement both request headers and response decompression
+- Both HTTP and HTTPS behave identically regarding compression
+
+See [GITHUB_ISSUE_SUMMARY.md](GITHUB_ISSUE_SUMMARY.md) for a concise summary suitable for submitting as a JDK enhancement request.
 
 ## Known Limitations
 
@@ -119,6 +138,7 @@ mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 │   ├── JavaHttpClientGoawayTest.java  # GOAWAY frame handling tests
 │   ├── JavaHttpClientConnectionReuseTest.java # Connection reuse and GOAWAY tests
 │   ├── JavaHttpClientWebSocketTest.java # WebSocket connection tests
+│   ├── JavaHttpClientCompressionTest.java # HTTP compression tests
 │   └── JavaHttpClientBase.java        # Base test class with utilities
 ├── src/main/resources/
 │   └── simplelogger.properties        # Logging configuration
