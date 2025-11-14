@@ -1,10 +1,12 @@
 package io.github.laeubi.httpclient;
 
+import java.io.ByteArrayOutputStream;
 import java.security.cert.CertificateException;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.zip.GZIPOutputStream;
 
 import javax.net.ssl.SSLException;
 
@@ -343,15 +345,29 @@ public class NettyHttp2Server {
 				}
 				
 				headers.set("content-type", "text/plain");
+				
+				// Check if client accepts gzip compression
+				CharSequence acceptEncoding = requestHeaders.get("accept-encoding");
+				boolean useGzip = acceptEncoding != null && 
+					acceptEncoding.toString().toLowerCase().contains("gzip");
+				
+				// Send data
+				String responseBody = "Hello from HTTP/2 server (connection: " + connectionId + ")\n";
+				byte[] responseBytes = responseBody.getBytes();
+				
+				// Compress if client accepts gzip
+				if (useGzip) {
+					responseBytes = gzipCompress(responseBytes);
+					headers.set("content-encoding", "gzip");
+					logger.info("Compressing response with gzip");
+				}
 
 				Http2HeadersFrame responseHeaders = new DefaultHttp2HeadersFrame(headers, false);
 				responseHeaders.stream(headersFrame.stream());
 				ctx.write(responseHeaders);
-
-				// Send data
-				String responseBody = "Hello from HTTP/2 server (connection: " + connectionId + ")\n";
+				
 				Http2DataFrame dataFrame = new DefaultHttp2DataFrame(
-						ctx.alloc().buffer().writeBytes(responseBody.getBytes()), true);
+						ctx.alloc().buffer().writeBytes(responseBytes), true);
 				dataFrame.stream(headersFrame.stream());
 				ctx.write(dataFrame);
 
@@ -388,11 +404,27 @@ public class NettyHttp2Server {
 		protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) {
 			logger.info("Received HTTP/1.1 request: {} {}", req.method(), req.uri());
 
+			String responseBody = "Hello from HTTP/1.1 server\n";
+			byte[] responseBytes = responseBody.getBytes();
+			
+			// Check if client accepts gzip compression
+			String acceptEncoding = req.headers().get(HttpHeaderNames.ACCEPT_ENCODING);
+			boolean useGzip = acceptEncoding != null && acceptEncoding.toLowerCase().contains("gzip");
+			
+			if (useGzip) {
+				responseBytes = gzipCompress(responseBytes);
+				logger.info("Compressing HTTP/1.1 response with gzip");
+			}
+			
 			FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK,
-					ctx.alloc().buffer().writeBytes("Hello from HTTP/1.1 server\n".getBytes()));
+					ctx.alloc().buffer().writeBytes(responseBytes));
 
 			response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain");
 			response.headers().set(HttpHeaderNames.CONTENT_LENGTH, response.content().readableBytes());
+			
+			if (useGzip) {
+				response.headers().set(HttpHeaderNames.CONTENT_ENCODING, "gzip");
+			}
 
 			ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
 		}
@@ -413,6 +445,22 @@ public class NettyHttp2Server {
 	public void assertGoaway() {
 		if (!goawayWasSend.compareAndSet(true, false)) {
 			throw new AssertionError("GOAWAY was not send!");
+		}
+	}
+	
+	/**
+	 * Helper method to gzip compress data
+	 */
+	private static byte[] gzipCompress(byte[] data) {
+		try {
+			ByteArrayOutputStream baos = new ByteArrayOutputStream();
+			try (GZIPOutputStream gzipOut = new GZIPOutputStream(baos)) {
+				gzipOut.write(data);
+			}
+			return baos.toByteArray();
+		} catch (Exception e) {
+			logger.error("Failed to compress data", e);
+			return data;
 		}
 	}
 }
