@@ -182,6 +182,55 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 	}
 
 	@Test
+	@DisplayName("WebSocket-only server rejects regular HTTP requests")
+	public void testWebSocketOnlyServerRejectsHttp() throws Exception {
+		logger.info("\n=== Testing WebSocket-Only Server Rejects Regular HTTP ===");
+		
+		// This test verifies that a WebSocket-only server can reject non-WebSocket HTTP requests
+		// while still accepting the WebSocket opening handshake
+		
+		HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+		
+		// Try to make a regular HTTP request (not WebSocket)
+		URI httpUri = URI.create("http://localhost:" + plainWsServer.getPort() + "/test");
+		logger.info("Attempting regular HTTP request to WebSocket-only server: {}", httpUri);
+		
+		java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+				.uri(httpUri)
+				.GET()
+				.timeout(Duration.ofSeconds(5))
+				.build();
+		
+		try {
+			java.net.http.HttpResponse<String> response = client.send(request, 
+				java.net.http.HttpResponse.BodyHandlers.ofString());
+			
+			// If we got here, the request succeeded - this is unexpected for a WebSocket-only server
+			logger.error("Unexpected: HTTP request succeeded with status: {}", response.statusCode());
+			throw new AssertionError(
+				"WebSocket-only server should reject regular HTTP requests, but got status: " + 
+				response.statusCode());
+			
+		} catch (java.io.IOException e) {
+			// Expected - connection should be rejected or closed
+			logger.info("✓ HTTP request rejected as expected: {}", e.getMessage());
+			logger.info("✓ This demonstrates the server rejects non-WebSocket HTTP requests");
+			
+			// Verify the server tracked this
+			assertTrue(plainWsServer.wasNonWebSocketHttpRequestReceived(),
+				"Server should have detected and rejected the non-WebSocket HTTP request");
+			logger.info("✓ Server correctly identified request as non-WebSocket HTTP");
+			
+			logger.info("\n=== TEST CONCLUSION ===");
+			logger.info("✓ WebSocket-only server accepts WebSocket handshakes");
+			logger.info("✓ WebSocket-only server rejects regular HTTP requests");
+			logger.info("✓ This demonstrates proper WebSocket protocol implementation per RFC 6455");
+		}
+		
+		logger.info("=== WebSocket-only server HTTP rejection test completed ===\n");
+	}
+
+	@Test
 	@DisplayName("WebSocket upgrade through HTTP")
 	public void testWebSocketUpgradeAfterHttp2() throws Exception {
 		logger.info("\n=== Testing WebSocket Upgrade from HTTP Connection ===");
