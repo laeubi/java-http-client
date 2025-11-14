@@ -1,10 +1,10 @@
 # Java HTTP Client Testing
 
-Check of Java HTTP Client Limitations with HTTP/2, GOAWAY frames, HTTP Compression, HTTP Caching, and HTTP Authentication
+Check of Java HTTP Client Limitations with HTTP/2, GOAWAY frames, HTTP Compression, HTTP Caching, HTTP Authentication, Forms, and Multipart
 
 ## Overview
 
-This project tests Java 11+ HTTP Client behavior with HTTP/2 protocol features, HTTP compression, HTTP caching, and HTTP authentication, specifically:
+This project tests Java 11+ HTTP Client behavior with HTTP/2 protocol features, HTTP compression, HTTP caching, HTTP authentication, and form/multipart handling, specifically:
 - HTTP/2 Upgrade from HTTP/1.1
 - GOAWAY frame handling
 - Connection management over HTTP and HTTPS
@@ -12,6 +12,8 @@ This project tests Java 11+ HTTP Client behavior with HTTP/2 protocol features, 
 - HTTP compression support (or lack thereof)
 - HTTP caching support (or lack thereof)
 - HTTP authentication schemes support (Basic, Digest, NTLM, SPNEGO/Kerberos)
+- HTML form submission support (application/x-www-form-urlencoded)
+- Multipart/form-data support including file uploads
 
 ## Test Scenarios
 
@@ -112,6 +114,31 @@ The tests demonstrate that:
 
 See [GITHUB_ISSUE_SUMMARY.md](GITHUB_ISSUE_SUMMARY.md) for a concise summary suitable for submitting as a JDK enhancement request.
 
+### 10. HTML Forms and Multipart Support
+
+Tests evaluating support for HTML form submissions and multipart/form-data requests. See [FORMS_AND_MULTIPART.md](FORMS_AND_MULTIPART.md) for detailed documentation.
+
+Tests are in `JavaHttpClientFormsTest`:
+- `testNoBuiltInFormAPI()` - Verifies client does NOT provide form data API
+- `testManualFormDataImplementation()` - Demonstrates manual URL-encoded form submission
+- `testFormDataWithSpecialCharacters()` - Tests URL encoding requirements
+- `testCompleteFormHandlingRequired()` - Shows complete manual implementation needed
+
+Tests are in `JavaHttpClientMultipartTest`:
+- `testNoBuiltInMultipartAPI()` - Verifies client does NOT provide multipart API
+- `testManualMultipartTextFields()` - Demonstrates manual multipart with text fields
+- `testManualFileUpload()` - Tests file upload with multipart/form-data
+- `testManualMultipartMixedContent()` - Tests mixed content (text fields + files)
+- `testBoundaryHandling()` - Demonstrates boundary generation and formatting complexity
+
+The tests demonstrate that:
+- Java HTTP Client does NOT provide convenience APIs for form data submission
+- Java HTTP Client does NOT provide convenience APIs for multipart/form-data
+- Applications must manually build `application/x-www-form-urlencoded` strings with URL encoding
+- Applications must manually construct multipart bodies with boundaries and headers
+- File uploads require manual encoding and Content-Disposition header construction
+- Both forms and multipart work but require complete manual implementation
+
 ## Known Limitations
 
 ### Custom SSLParameters Interfere with HTTP/2
@@ -178,7 +205,8 @@ mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 ├── src/main/java/io/github/laeubi/httpclient/
 │   ├── NettyHttp2Server.java          # Netty-based HTTP/2 test server with connection tracking
 │   ├── NettyWebSocketServer.java      # Netty-based WebSocket test server
-│   └── NettyAuthenticationServer.java # Netty-based authentication test server
+│   ├── NettyAuthenticationServer.java # Netty-based authentication test server
+│   └── NettyFormsServer.java          # Netty-based forms and multipart test server
 ├── src/test/java/io/github/laeubi/httpclient/
 │   ├── JavaHttpClientUpgradeTest.java # HTTP/2 upgrade and ALPN tests
 │   ├── JavaHttpClientGoawayTest.java  # GOAWAY frame handling tests
@@ -187,6 +215,8 @@ mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 │   ├── JavaHttpClientCompressionTest.java # HTTP compression tests
 │   ├── JavaHttpClientCachingTest.java # HTTP caching tests
 │   ├── JavaHttpClientAuthenticationTest.java # HTTP authentication tests
+│   ├── JavaHttpClientFormsTest.java   # HTML forms tests
+│   ├── JavaHttpClientMultipartTest.java # Multipart/form-data tests
 │   └── JavaHttpClientBase.java        # Base test class with utilities
 ├── src/main/resources/
 │   └── simplelogger.properties        # Logging configuration
@@ -195,6 +225,7 @@ mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 ├── HTTP_COMPRESSION.md                # HTTP compression documentation
 ├── HTTP_CACHING.md                    # HTTP caching documentation
 ├── HTTP_AUTHENTICATION.md             # HTTP authentication documentation
+├── FORMS_AND_MULTIPART.md             # Forms and multipart/form-data documentation
 ├── GITHUB_ISSUE_SUMMARY.md            # JDK enhancement request summary
 └── pom.xml                            # Maven project configuration
 ```
