@@ -326,6 +326,29 @@ Always validate and sanitize data received over WebSocket connections, just as y
 - Real-time, low-latency updates are critical
 - You want to minimize connection establishment overhead for frequent messages
 
+## Java HttpClient Behavior with Plain WebSocket Servers
+
+### Testing Results
+
+The test suite in this repository includes tests that demonstrate how Java's HttpClient handles different WebSocket server configurations:
+
+1. **HTTP Upgrade Support (Standard Behavior)**
+   - Test: `testWebSocketUpgradeAfterHttp2`
+   - The client successfully connects to servers that support HTTP upgrade
+   - This is the standard WebSocket connection mechanism per RFC 6455
+
+2. **Plain WebSocket Without HTTP Upgrade**
+   - Test: `testDirectWebSocketConnection`
+   - This test demonstrates what happens when a server ONLY supports plain WebSocket protocol without HTTP upgrade
+   - **Finding**: Java HttpClient ALWAYS attempts HTTP upgrade for ws:// URIs
+   - The client cannot connect to servers that don't support HTTP upgrade
+   - There is no way to configure the client to skip HTTP upgrade
+   - **This is correct behavior per RFC 6455**, which specifies HTTP upgrade as the standard mechanism
+
+### Key Takeaway
+
+If you're implementing a WebSocket server to work with Java's HttpClient (or most standard WebSocket clients), you **must** implement the HTTP upgrade mechanism. A plain WebSocket protocol without HTTP upgrade will not work with standard WebSocket clients, as they always initiate the connection with an HTTP upgrade request.
+
 ## References
 
 - [RFC 6455 - The WebSocket Protocol](https://datatracker.ietf.org/doc/html/rfc6455)
