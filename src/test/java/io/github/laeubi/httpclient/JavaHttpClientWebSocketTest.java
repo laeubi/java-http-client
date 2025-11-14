@@ -33,11 +33,15 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 	private static final Logger logger = LoggerFactory.getLogger(JavaHttpClientWebSocketTest.class);
 
 	private static NettyWebSocketServer wsServer;
+	private static NettyPlainWebSocketServer plainWsServer;
 
 	@BeforeAll
 	public static void startServers() throws Exception {
-		// Start a simple WebSocket server on port 8090
+		// Start a simple WebSocket server on port 8090 (with HTTP upgrade support)
 		wsServer = new NettyWebSocketServer(8090);
+		
+		// Start a plain WebSocket server on port 8091 (no HTTP upgrade support)
+		plainWsServer = new NettyPlainWebSocketServer(8091);
 	}
 
 	@AfterAll
@@ -46,15 +50,184 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 			wsServer.stop();
 			wsServer = null;
 		}
+		if (plainWsServer != null) {
+			plainWsServer.stop();
+			plainWsServer = null;
+		}
 	}
 
 	@Test
-	@DisplayName("Direct WebSocket connection works (ws:// URI)")
+	@DisplayName("WebSocket-only server connection (accepts WS handshake, rejects general HTTP)")
 	public void testDirectWebSocketConnection() throws Exception {
-		// TODO we want to test what happens if the server ONLY support Webservice
-		// protocol!
+		logger.info("\n=== Testing WebSocket-Only Server Connection ===");
+		
+		// This test verifies an important distinction from RFC 6455 Section 1.7:
+		// "The WebSocket Protocol is an independent TCP-based protocol. Its only
+		// relationship to HTTP is that its handshake is interpreted by HTTP servers
+		// as an Upgrade request."
+		//
+		// A WebSocket-only server:
+		// - MUST handle the WebSocket opening handshake (which uses HTTP/1.1 syntax)
+		// - MAY reject other HTTP requests
+		// - Does not need to be a general-purpose HTTP server
+		
 		HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 		WebSocket.Builder webSocketBuilder = client.newWebSocketBuilder();
+		
+		// Connect to the WebSocket-only server
+		URI wsUri = URI.create("ws://localhost:" + plainWsServer.getPort() + "/ws");
+		logger.info("Attempting WebSocket connection to WebSocket-only server: {}", wsUri);
+		logger.info("NOTE: This server accepts WebSocket handshakes but rejects general HTTP requests");
+		
+		CountDownLatch openLatch = new CountDownLatch(1);
+		CountDownLatch messageLatch = new CountDownLatch(1);
+		AtomicReference<String> receivedMessage = new AtomicReference<>();
+		AtomicReference<Throwable> errorRef = new AtomicReference<>();
+		
+		WebSocket.Listener listener = new WebSocket.Listener() {
+			@Override
+			public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+				logger.info("✓ Received WebSocket message: {}", data);
+				receivedMessage.set(data.toString());
+				messageLatch.countDown();
+				return CompletableFuture.completedFuture(null);
+			}
+
+			@Override
+			public void onOpen(WebSocket webSocket) {
+				logger.info("✓ WebSocket connection opened successfully");
+				openLatch.countDown();
+				WebSocket.Listener.super.onOpen(webSocket);
+			}
+
+			@Override
+			public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+				logger.info("WebSocket closed with status: {}, reason: {}", statusCode, reason);
+				return CompletableFuture.completedFuture(null);
+			}
+
+			@Override
+			public void onError(WebSocket webSocket, Throwable error) {
+				logger.error("✗ WebSocket error occurred", error);
+				errorRef.set(error);
+				openLatch.countDown();
+			}
+		};
+
+		try {
+			logger.info("Building async WebSocket connection...");
+			CompletableFuture<WebSocket> wsFuture = webSocketBuilder.buildAsync(wsUri, listener);
+			
+			logger.info("Waiting for connection to complete (up to 10 seconds)...");
+			WebSocket webSocket = wsFuture.get(10, TimeUnit.SECONDS);
+			
+			// Wait for onOpen to be called
+			boolean opened = openLatch.await(5, TimeUnit.SECONDS);
+			
+			if (errorRef.get() != null) {
+				// Connection failed
+				logger.error("=== CONNECTION FAILED ===");
+				logger.error("Error: {}", errorRef.get().getMessage());
+				throw new AssertionError("WebSocket connection failed: " + errorRef.get().getMessage(), errorRef.get());
+			}
+			
+			if (opened && webSocket != null) {
+				// Connection succeeded!
+				logger.info("=== CONNECTION SUCCEEDED ===");
+				assertNotNull(webSocket, "WebSocket should be established");
+				logger.info("✓ WebSocket connection established successfully");
+				
+				// Verify the handshake was completed on the server
+				assertTrue(plainWsServer.wasWebSocketHandshakeCompleted(), 
+					"Server should have completed WebSocket handshake");
+				logger.info("✓ Server completed WebSocket opening handshake");
+				
+				// Try to send a test message
+				logger.info("Sending test message...");
+				webSocket.sendText("Test message", true).get(5, TimeUnit.SECONDS);
+				
+				// Wait for response
+				boolean received = messageLatch.await(10, TimeUnit.SECONDS);
+				assertTrue(received, "Should receive echo response from WebSocket server");
+				assertEquals("WebSocket-only Echo: Test message", receivedMessage.get(), 
+					"Should receive echoed message from WebSocket-only server");
+				logger.info("✓ Received response: {}", receivedMessage.get());
+				
+				// Close the connection
+				webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "Test complete").get(5, TimeUnit.SECONDS);
+				
+				// Verify server behavior
+				plainWsServer.assertWebSocketHandshakeCompleted();
+				
+				logger.info("\n=== TEST CONCLUSION ===");
+				logger.info("✓ Java HttpClient sends WebSocket opening handshake (uses HTTP/1.1 syntax)");
+				logger.info("✓ WebSocket-only server accepts the handshake");
+				logger.info("✓ Connection established and messages exchanged successfully");
+				logger.info("✓ This demonstrates RFC 6455 Section 1.7: WebSocket handshake uses HTTP-like syntax");
+				logger.info("   but is part of the WebSocket protocol, not HTTP");
+			} else {
+				logger.error("Connection did not open within timeout");
+				throw new AssertionError("WebSocket connection did not open within timeout");
+			}
+			
+		} catch (Exception e) {
+			// Document what happened
+			logger.error("=== EXCEPTION DURING CONNECTION ===");
+			logger.error("Exception type: {}", e.getClass().getName());
+			logger.error("Exception message: {}", e.getMessage());
+			throw e;
+		}
+
+		logger.info("=== WebSocket-only server connection test completed ===\n");
+	}
+
+	@Test
+	@DisplayName("WebSocket-only server rejects regular HTTP requests")
+	public void testWebSocketOnlyServerRejectsHttp() throws Exception {
+		logger.info("\n=== Testing WebSocket-Only Server Rejects Regular HTTP ===");
+		
+		// This test verifies that a WebSocket-only server can reject non-WebSocket HTTP requests
+		// while still accepting the WebSocket opening handshake
+		
+		HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+		
+		// Try to make a regular HTTP request (not WebSocket)
+		URI httpUri = URI.create("http://localhost:" + plainWsServer.getPort() + "/test");
+		logger.info("Attempting regular HTTP request to WebSocket-only server: {}", httpUri);
+		
+		java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+				.uri(httpUri)
+				.GET()
+				.timeout(Duration.ofSeconds(5))
+				.build();
+		
+		try {
+			java.net.http.HttpResponse<String> response = client.send(request, 
+				java.net.http.HttpResponse.BodyHandlers.ofString());
+			
+			// If we got here, the request succeeded - this is unexpected for a WebSocket-only server
+			logger.error("Unexpected: HTTP request succeeded with status: {}", response.statusCode());
+			throw new AssertionError(
+				"WebSocket-only server should reject regular HTTP requests, but got status: " + 
+				response.statusCode());
+			
+		} catch (java.io.IOException e) {
+			// Expected - connection should be rejected or closed
+			logger.info("✓ HTTP request rejected as expected: {}", e.getMessage());
+			logger.info("✓ This demonstrates the server rejects non-WebSocket HTTP requests");
+			
+			// Verify the server tracked this
+			assertTrue(plainWsServer.wasNonWebSocketHttpRequestReceived(),
+				"Server should have detected and rejected the non-WebSocket HTTP request");
+			logger.info("✓ Server correctly identified request as non-WebSocket HTTP");
+			
+			logger.info("\n=== TEST CONCLUSION ===");
+			logger.info("✓ WebSocket-only server accepts WebSocket handshakes");
+			logger.info("✓ WebSocket-only server rejects regular HTTP requests");
+			logger.info("✓ This demonstrates proper WebSocket protocol implementation per RFC 6455");
+		}
+		
+		logger.info("=== WebSocket-only server HTTP rejection test completed ===\n");
 	}
 
 	@Test
