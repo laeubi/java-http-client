@@ -1,15 +1,16 @@
 # Java HTTP Client Testing
 
-Check of Java HTTP Client Limitations with HTTP/2, GOAWAY frames, and HTTP Compression
+Check of Java HTTP Client Limitations with HTTP/2, GOAWAY frames, HTTP Compression, and HTTP Caching
 
 ## Overview
 
-This project tests Java 11+ HTTP Client behavior with HTTP/2 protocol features and HTTP compression, specifically:
+This project tests Java 11+ HTTP Client behavior with HTTP/2 protocol features, HTTP compression, and HTTP caching, specifically:
 - HTTP/2 Upgrade from HTTP/1.1
 - GOAWAY frame handling
 - Connection management over HTTP and HTTPS
 - ALPN negotiation and custom SSLParameters behavior
 - HTTP compression support (or lack thereof)
+- HTTP caching support (or lack thereof)
 
 ## Test Scenarios
 
@@ -64,6 +65,24 @@ The tests demonstrate that:
 - Java HTTP Client does NOT automatically decompress compressed responses
 - Applications must manually implement both request headers and response decompression
 - Both HTTP and HTTPS behave identically regarding compression
+
+### 8. HTTP Caching Support
+Tests demonstrating that Java HTTP Client does NOT support HTTP caching out of the box. See [HTTP_CACHING.md](HTTP_CACHING.md) for detailed documentation.
+
+Tests are in `JavaHttpClientCachingTest`:
+- `testNoCacheControlHandling()` - Verifies client does NOT handle Cache-Control headers automatically
+- `testNoAutomaticETagHandling()` - Verifies client does NOT use ETags for conditional requests
+- `testManualIfNoneMatchRequired()` - Demonstrates manual If-None-Match header required
+- `testNo304Handling()` - Verifies client does NOT handle 304 Not Modified transparently
+- `testManualCachingRequired()` - Shows complex manual implementation required
+- `testHttpsNoCaching()` - Verifies same behavior for HTTPS
+
+The tests demonstrate that:
+- Java HTTP Client does NOT automatically handle Cache-Control headers
+- Java HTTP Client does NOT automatically use ETags for conditional requests
+- Java HTTP Client does NOT handle 304 Not Modified responses transparently
+- Applications must manually implement complete caching lifecycle
+- Both HTTP and HTTPS behave identically regarding caching
 
 See [GITHUB_ISSUE_SUMMARY.md](GITHUB_ISSUE_SUMMARY.md) for a concise summary suitable for submitting as a JDK enhancement request.
 
@@ -139,11 +158,15 @@ mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 │   ├── JavaHttpClientConnectionReuseTest.java # Connection reuse and GOAWAY tests
 │   ├── JavaHttpClientWebSocketTest.java # WebSocket connection tests
 │   ├── JavaHttpClientCompressionTest.java # HTTP compression tests
+│   ├── JavaHttpClientCachingTest.java # HTTP caching tests
 │   └── JavaHttpClientBase.java        # Base test class with utilities
 ├── src/main/resources/
 │   └── simplelogger.properties        # Logging configuration
 ├── .github/workflows/
 │   └── ci.yml                         # GitHub Actions workflow
+├── HTTP_COMPRESSION.md                # HTTP compression documentation
+├── HTTP_CACHING.md                    # HTTP caching documentation
+├── GITHUB_ISSUE_SUMMARY.md            # JDK enhancement request summary
 └── pom.xml                            # Maven project configuration
 ```
 
