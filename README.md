@@ -1,16 +1,17 @@
 # Java HTTP Client Testing
 
-Check of Java HTTP Client Limitations with HTTP/2, GOAWAY frames, HTTP Compression, and HTTP Caching
+Check of Java HTTP Client Limitations with HTTP/2, GOAWAY frames, HTTP Compression, HTTP Caching, and HTTP Authentication
 
 ## Overview
 
-This project tests Java 11+ HTTP Client behavior with HTTP/2 protocol features, HTTP compression, and HTTP caching, specifically:
+This project tests Java 11+ HTTP Client behavior with HTTP/2 protocol features, HTTP compression, HTTP caching, and HTTP authentication, specifically:
 - HTTP/2 Upgrade from HTTP/1.1
 - GOAWAY frame handling
 - Connection management over HTTP and HTTPS
 - ALPN negotiation and custom SSLParameters behavior
 - HTTP compression support (or lack thereof)
 - HTTP caching support (or lack thereof)
+- HTTP authentication schemes support (Basic, Digest, NTLM, SPNEGO/Kerberos)
 
 ## Test Scenarios
 
@@ -84,6 +85,31 @@ The tests demonstrate that:
 - Applications must manually implement complete caching lifecycle
 - Both HTTP and HTTPS behave identically regarding caching
 
+### 9. HTTP Authentication Support
+
+Tests evaluating support for common HTTP authentication schemes. See [HTTP_AUTHENTICATION.md](HTTP_AUTHENTICATION.md) for detailed documentation.
+
+Tests are in `JavaHttpClientAuthenticationTest`:
+- `testBasicAuthenticationNativeSupport()` - Verifies native Basic auth via Authenticator
+- `testBasicAuthenticationManualImplementation()` - Tests manual Basic auth implementation
+- `testBasicAuthenticationHttps()` - Tests Basic auth over HTTPS
+- `testBasicAuthenticationChallengeResponse()` - Tests challenge-response flow
+- `testDigestAuthenticationNativeSupport()` - Tests Digest auth support (limited)
+- `testDigestAuthenticationManualImplementation()` - Shows Digest implementation complexity
+- `testNTLMAuthenticationNativeSupport()` - Tests NTLM support (not supported)
+- `testNTLMAuthenticationManualImplementation()` - Shows NTLM implementation complexity
+- `testSPNEGOAuthenticationNativeSupport()` - Tests SPNEGO/Kerberos (limited via JGSS)
+- `testSPNEGOAuthenticationManualImplementation()` - Shows SPNEGO implementation requirements
+- `testBearerTokenAuthentication()` - Tests Bearer token (OAuth 2.0) implementation
+- `testAuthenticationSchemeSummary()` - Displays comprehensive support matrix
+
+The tests demonstrate that:
+- **HTTP Basic:** Fully supported natively via `java.net.Authenticator`
+- **HTTP Digest:** Limited native support, varies by JDK version
+- **NTLM:** Not supported natively, requires third-party libraries (Apache HttpClient + JCIFS)
+- **SPNEGO/Kerberos:** Not supported via Authenticator, can use Java GSS-API with infrastructure
+- **Bearer Token (OAuth 2.0):** Not supported natively, requires manual implementation
+
 See [GITHUB_ISSUE_SUMMARY.md](GITHUB_ISSUE_SUMMARY.md) for a concise summary suitable for submitting as a JDK enhancement request.
 
 ## Known Limitations
@@ -151,7 +177,8 @@ mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 ```
 ├── src/main/java/io/github/laeubi/httpclient/
 │   ├── NettyHttp2Server.java          # Netty-based HTTP/2 test server with connection tracking
-│   └── NettyWebSocketServer.java      # Netty-based WebSocket test server
+│   ├── NettyWebSocketServer.java      # Netty-based WebSocket test server
+│   └── NettyAuthenticationServer.java # Netty-based authentication test server
 ├── src/test/java/io/github/laeubi/httpclient/
 │   ├── JavaHttpClientUpgradeTest.java # HTTP/2 upgrade and ALPN tests
 │   ├── JavaHttpClientGoawayTest.java  # GOAWAY frame handling tests
@@ -159,6 +186,7 @@ mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 │   ├── JavaHttpClientWebSocketTest.java # WebSocket connection tests
 │   ├── JavaHttpClientCompressionTest.java # HTTP compression tests
 │   ├── JavaHttpClientCachingTest.java # HTTP caching tests
+│   ├── JavaHttpClientAuthenticationTest.java # HTTP authentication tests
 │   └── JavaHttpClientBase.java        # Base test class with utilities
 ├── src/main/resources/
 │   └── simplelogger.properties        # Logging configuration
@@ -166,6 +194,7 @@ mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 │   └── ci.yml                         # GitHub Actions workflow
 ├── HTTP_COMPRESSION.md                # HTTP compression documentation
 ├── HTTP_CACHING.md                    # HTTP caching documentation
+├── HTTP_AUTHENTICATION.md             # HTTP authentication documentation
 ├── GITHUB_ISSUE_SUMMARY.md            # JDK enhancement request summary
 └── pom.xml                            # Maven project configuration
 ```
