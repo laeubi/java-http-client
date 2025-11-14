@@ -98,6 +98,9 @@ public class NettyHttp2Server {
 	// Connection tracking
 	private final ConcurrentHashMap<String, String> nonceToConnectionId = new ConcurrentHashMap<>();
 	private final AtomicLong connectionCounter = new AtomicLong(0);
+	
+	// ETag for caching tests - fixed ETag for consistent content
+	private static final String ETAG_VALUE = "\"v1.0-content-hash-abc123\"";
 
 	public NettyHttp2Server(int port, boolean ssl, boolean sendGoAway) throws Exception {
 		this(port, ssl, sendGoAway, true);
@@ -346,6 +349,21 @@ public class NettyHttp2Server {
 				
 				headers.set("content-type", "text/plain");
 				
+				// Handle caching headers
+				CharSequence ifNoneMatch = requestHeaders.get("if-none-match");
+				boolean sendNotModified = false;
+				if (ifNoneMatch != null && ETAG_VALUE.equals(ifNoneMatch.toString())) {
+					// Client has the current version, send 304 Not Modified
+					sendNotModified = true;
+					headers.status("304");
+					logger.info("Client sent matching If-None-Match, responding with 304 Not Modified");
+				} else {
+					// Always send ETag with 200 responses
+					headers.set("etag", ETAG_VALUE);
+					// Add Cache-Control header
+					headers.set("cache-control", "max-age=3600");
+				}
+				
 				// Check if client accepts gzip compression
 				CharSequence acceptEncoding = requestHeaders.get("accept-encoding");
 				boolean useGzip = acceptEncoding != null && 
@@ -355,11 +373,16 @@ public class NettyHttp2Server {
 				String responseBody = "Hello from HTTP/2 server (connection: " + connectionId + ")\n";
 				byte[] responseBytes = responseBody.getBytes();
 				
-				// Compress if client accepts gzip
-				if (useGzip) {
-					responseBytes = gzipCompress(responseBytes);
-					headers.set("content-encoding", "gzip");
-					logger.info("Compressing response with gzip");
+				// For 304 Not Modified, send empty body
+				if (sendNotModified) {
+					responseBytes = new byte[0];
+				} else {
+					// Compress if client accepts gzip and not a 304 response
+					if (useGzip) {
+						responseBytes = gzipCompress(responseBytes);
+						headers.set("content-encoding", "gzip");
+						logger.info("Compressing response with gzip");
+					}
 				}
 
 				Http2HeadersFrame responseHeaders = new DefaultHttp2HeadersFrame(headers, false);
@@ -404,23 +427,40 @@ public class NettyHttp2Server {
 		protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) {
 			logger.info("Received HTTP/1.1 request: {} {}", req.method(), req.uri());
 
+			// Handle caching headers
+			String ifNoneMatch = req.headers().get("If-None-Match");
+			boolean sendNotModified = false;
+			if (ifNoneMatch != null && ETAG_VALUE.equals(ifNoneMatch)) {
+				// Client has the current version, send 304 Not Modified
+				sendNotModified = true;
+				logger.info("Client sent matching If-None-Match, responding with 304 Not Modified");
+			}
+
 			String responseBody = "Hello from HTTP/1.1 server\n";
-			byte[] responseBytes = responseBody.getBytes();
+			byte[] responseBytes = sendNotModified ? new byte[0] : responseBody.getBytes();
 			
 			// Check if client accepts gzip compression
 			String acceptEncoding = req.headers().get(HttpHeaderNames.ACCEPT_ENCODING);
-			boolean useGzip = acceptEncoding != null && acceptEncoding.toLowerCase().contains("gzip");
+			boolean useGzip = !sendNotModified && acceptEncoding != null && acceptEncoding.toLowerCase().contains("gzip");
 			
 			if (useGzip) {
 				responseBytes = gzipCompress(responseBytes);
 				logger.info("Compressing HTTP/1.1 response with gzip");
 			}
 			
-			FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK,
+			HttpResponseStatus status = sendNotModified ? HttpResponseStatus.NOT_MODIFIED : HttpResponseStatus.OK;
+			FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status,
 					ctx.alloc().buffer().writeBytes(responseBytes));
 
 			response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain");
 			response.headers().set(HttpHeaderNames.CONTENT_LENGTH, response.content().readableBytes());
+			
+			if (!sendNotModified) {
+				// Always send ETag with 200 responses
+				response.headers().set(HttpHeaderNames.ETAG, ETAG_VALUE);
+				// Add Cache-Control header
+				response.headers().set(HttpHeaderNames.CACHE_CONTROL, "max-age=3600");
+			}
 			
 			if (useGzip) {
 				response.headers().set(HttpHeaderNames.CONTENT_ENCODING, "gzip");
