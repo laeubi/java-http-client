@@ -27,12 +27,19 @@ import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 
 /**
- * WebSocket server that ONLY supports plain WebSocket protocol without HTTP upgrade.
- * This server is configured to refuse HTTP upgrade requests and only accept 
- * direct WebSocket connections.
+ * WebSocket-only server that accepts WebSocket connections but rejects general HTTP requests.
  * 
- * This is used to test how Java HttpClient handles servers that don't support
- * the HTTP upgrade mechanism for WebSocket.
+ * This server demonstrates an important distinction from RFC 6455 Section 1.7:
+ * "The WebSocket Protocol is an independent TCP-based protocol. Its only relationship 
+ * to HTTP is that its handshake is interpreted by HTTP servers as an Upgrade request."
+ * 
+ * A WebSocket-only server:
+ * - MUST handle the WebSocket opening handshake (which uses HTTP/1.1 syntax)
+ * - MAY reject other HTTP requests that are not WebSocket handshakes
+ * - Does not need to be a general-purpose HTTP server
+ * 
+ * This is used to test how Java HttpClient handles WebSocket-only servers and to
+ * verify that the client correctly sends the WebSocket opening handshake.
  */
 public class NettyPlainWebSocketServer {
 	
@@ -46,11 +53,12 @@ public class NettyPlainWebSocketServer {
 	private Channel channel;
 	private EventLoopGroup bossGroup;
 	private EventLoopGroup workerGroup;
-	private AtomicBoolean httpUpgradeAttempted = new AtomicBoolean();
+	private AtomicBoolean webSocketHandshakeCompleted = new AtomicBoolean();
+	private AtomicBoolean nonWebSocketHttpRequestReceived = new AtomicBoolean();
 	
 	public NettyPlainWebSocketServer(int port) throws Exception {
 		this.port = port;
-		logger.info("Starting PLAIN WebSocket server (no HTTP upgrade support) on port {}", port);
+		logger.info("Starting WebSocket-only server (accepts WS handshake, rejects general HTTP) on port {}", port);
 		
 		bossGroup = new NioEventLoopGroup(1);
 		workerGroup = new NioEventLoopGroup();
@@ -62,50 +70,57 @@ public class NettyPlainWebSocketServer {
 			.childHandler(new ChannelInitializer<SocketChannel>() {
 				@Override
 				protected void initChannel(SocketChannel ch) throws Exception {
-					logger.info("New connection established, configuring pipeline for plain WebSocket");
+					logger.info("New connection established, configuring pipeline for WebSocket-only server");
 					
-					// We still need HTTP codec to detect if client tries to do HTTP upgrade
-					// But we'll reject it
+					// HTTP codec to handle the WebSocket opening handshake
 					ch.pipeline().addLast(new HttpServerCodec());
 					ch.pipeline().addLast(new HttpObjectAggregator(65536));
 					
-					// Add handler to detect and reject HTTP upgrade attempts
+					// Add handler to detect and reject non-WebSocket HTTP requests
 					ch.pipeline().addLast(new SimpleChannelInboundHandler<FullHttpRequest>() {
 						@Override
 						protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) throws Exception {
 							String upgrade = req.headers().get(HttpHeaderNames.UPGRADE);
 							if (upgrade != null && "websocket".equalsIgnoreCase(upgrade)) {
-								// Client is trying to do HTTP upgrade - this server doesn't support it
-								logger.error("HTTP WebSocket upgrade attempted but this server ONLY supports plain WebSocket protocol!");
-								logger.error("Request: {} {}", req.method(), req.uri());
-								logger.error("Upgrade header: {}", upgrade);
-								httpUpgradeAttempted.set(true);
-								
-								// Close the connection - we don't support HTTP upgrade
-								logger.error("Closing connection - HTTP upgrade not supported by this server");
-								ctx.close();
+								// This is the WebSocket opening handshake - accept it!
+								logger.info("✓ WebSocket opening handshake received: {} {}", req.method(), req.uri());
+								logger.info("✓ This is part of the WebSocket protocol (uses HTTP-like syntax)");
+								// Let it pass to WebSocket handler
+								ctx.fireChannelRead(req.retain());
 							} else {
-								// Regular HTTP request - also not supported
-								logger.error("Regular HTTP request received but this server ONLY supports plain WebSocket protocol!");
-								logger.error("Request: {} {}", req.method(), req.uri());
+								// Regular HTTP request - this server doesn't support general HTTP
+								logger.error("✗ Non-WebSocket HTTP request received: {} {}", req.method(), req.uri());
+								logger.error("✗ This server only supports WebSocket protocol, not general HTTP");
+								nonWebSocketHttpRequestReceived.set(true);
 								ctx.close();
 							}
 						}
 						
 						@Override
 						public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-							logger.error("Exception in HTTP upgrade detection handler", cause);
+							logger.error("Exception in request handler", cause);
 							ctx.close();
 						}
 					});
 					
-					// WebSocket protocol handler would go here, but it won't be reached
-					// because we reject the HTTP upgrade attempt
+					// WebSocket protocol handler - handles the handshake completion
 					WebSocketServerProtocolConfig wsConfig = WebSocketServerProtocolConfig.newBuilder()
 						.websocketPath("/ws")
 						.checkStartsWith(true)
 						.build();
 					ch.pipeline().addLast(new WebSocketServerProtocolHandler(wsConfig));
+					
+					// Track successful handshake completion
+					ch.pipeline().addLast(new io.netty.channel.ChannelInboundHandlerAdapter() {
+						@Override
+						public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+							if (evt instanceof io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler.HandshakeComplete) {
+								webSocketHandshakeCompleted.set(true);
+								logger.info("✓ WebSocket handshake completed successfully");
+							}
+							super.userEventTriggered(ctx, evt);
+						}
+					});
 					
 					// WebSocket frame handler
 					ch.pipeline().addLast(new WebSocketFrameHandler());
@@ -114,11 +129,11 @@ public class NettyPlainWebSocketServer {
 		
 		ChannelFuture f = b.bind(port).sync();
 		channel = f.channel();
-		logger.info("PLAIN WebSocket server (no HTTP upgrade) started successfully on port {}", port);
+		logger.info("WebSocket-only server started successfully on port {}", port);
 	}
 	
 	public void stop() {
-		logger.info("Stopping PLAIN WebSocket server on port {}", port);
+		logger.info("Stopping WebSocket-only server on port {}", port);
 		if (channel != null) {
 			channel.close();
 		}
@@ -135,25 +150,42 @@ public class NettyPlainWebSocketServer {
 	}
 	
 	public void reset() {
-		httpUpgradeAttempted.set(false);
+		webSocketHandshakeCompleted.set(false);
+		nonWebSocketHttpRequestReceived.set(false);
 	}
 	
 	/**
-	 * Asserts that NO HTTP upgrade was attempted.
-	 * This is the expected behavior for a plain WebSocket server.
+	 * Asserts that the WebSocket handshake was completed successfully.
 	 */
-	public void assertNoHttpUpgrade() {
-		if (httpUpgradeAttempted.get()) {
-			throw new AssertionError("HTTP WebSocket upgrade was attempted, but this server doesn't support it!");
+	public void assertWebSocketHandshakeCompleted() {
+		if (!webSocketHandshakeCompleted.get()) {
+			throw new AssertionError("WebSocket handshake was not completed!");
 		}
-		logger.info("✓ Assertion passed: No HTTP upgrade was attempted (as expected for plain WebSocket)");
+		logger.info("✓ Assertion passed: WebSocket handshake completed successfully");
 	}
 	
 	/**
-	 * Checks if an HTTP upgrade was attempted (for verification in tests)
+	 * Checks if the WebSocket handshake was completed.
 	 */
-	public boolean wasHttpUpgradeAttempted() {
-		return httpUpgradeAttempted.get();
+	public boolean wasWebSocketHandshakeCompleted() {
+		return webSocketHandshakeCompleted.get();
+	}
+	
+	/**
+	 * Asserts that no non-WebSocket HTTP requests were received.
+	 */
+	public void assertNoNonWebSocketHttpRequests() {
+		if (nonWebSocketHttpRequestReceived.get()) {
+			throw new AssertionError("Non-WebSocket HTTP request was received by this WebSocket-only server!");
+		}
+		logger.info("✓ Assertion passed: No non-WebSocket HTTP requests received");
+	}
+	
+	/**
+	 * Checks if a non-WebSocket HTTP request was received.
+	 */
+	public boolean wasNonWebSocketHttpRequestReceived() {
+		return nonWebSocketHttpRequestReceived.get();
 	}
 	
 	/**
@@ -171,7 +203,7 @@ public class NettyPlainWebSocketServer {
 				logger.info("Received WebSocket text frame: {}", text);
 				
 				// Echo the message back
-				String response = "Plain Echo: " + text;
+				String response = "WebSocket-only Echo: " + text;
 				ctx.writeAndFlush(new TextWebSocketFrame(response));
 				logger.info("Sent WebSocket response: {}", response);
 			} else {

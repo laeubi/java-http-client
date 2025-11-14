@@ -57,27 +57,32 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 	}
 
 	@Test
-	@DisplayName("Direct WebSocket connection to plain WebSocket server (no HTTP upgrade)")
+	@DisplayName("WebSocket-only server connection (accepts WS handshake, rejects general HTTP)")
 	public void testDirectWebSocketConnection() throws Exception {
-		logger.info("\n=== Testing Direct WebSocket Connection (Plain WebSocket, No HTTP Upgrade) ===");
+		logger.info("\n=== Testing WebSocket-Only Server Connection ===");
 		
-		// This test checks what happens when the server ONLY supports WebSocket protocol
-		// without HTTP upgrade. Will the Java HttpClient still try to do an HTTP upgrade?
-		// How does it know the server doesn't support HTTP upgrade?
+		// This test verifies an important distinction from RFC 6455 Section 1.7:
+		// "The WebSocket Protocol is an independent TCP-based protocol. Its only
+		// relationship to HTTP is that its handshake is interpreted by HTTP servers
+		// as an Upgrade request."
+		//
+		// A WebSocket-only server:
+		// - MUST handle the WebSocket opening handshake (which uses HTTP/1.1 syntax)
+		// - MAY reject other HTTP requests
+		// - Does not need to be a general-purpose HTTP server
 		
 		HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 		WebSocket.Builder webSocketBuilder = client.newWebSocketBuilder();
 		
-		// Connect to the plain WebSocket server (no HTTP upgrade support)
+		// Connect to the WebSocket-only server
 		URI wsUri = URI.create("ws://localhost:" + plainWsServer.getPort() + "/ws");
-		logger.info("Attempting WebSocket connection to plain WebSocket server: {}", wsUri);
-		logger.info("NOTE: This server does NOT support HTTP upgrade - it only accepts plain WebSocket protocol");
+		logger.info("Attempting WebSocket connection to WebSocket-only server: {}", wsUri);
+		logger.info("NOTE: This server accepts WebSocket handshakes but rejects general HTTP requests");
 		
 		CountDownLatch openLatch = new CountDownLatch(1);
 		CountDownLatch messageLatch = new CountDownLatch(1);
 		AtomicReference<String> receivedMessage = new AtomicReference<>();
 		AtomicReference<Throwable> errorRef = new AtomicReference<>();
-		AtomicReference<String> closeReason = new AtomicReference<>();
 		
 		WebSocket.Listener listener = new WebSocket.Listener() {
 			@Override
@@ -98,7 +103,6 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 			@Override
 			public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
 				logger.info("WebSocket closed with status: {}, reason: {}", statusCode, reason);
-				closeReason.set(reason);
 				return CompletableFuture.completedFuture(null);
 			}
 
@@ -121,36 +125,22 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 			boolean opened = openLatch.await(5, TimeUnit.SECONDS);
 			
 			if (errorRef.get() != null) {
-				// Connection failed - this is expected!
-				logger.error("=== CONNECTION FAILED (AS EXPECTED) ===");
+				// Connection failed
+				logger.error("=== CONNECTION FAILED ===");
 				logger.error("Error: {}", errorRef.get().getMessage());
-				logger.error("This demonstrates that Java HttpClient CANNOT connect to a plain WebSocket server");
-				logger.error("The client always tries to do HTTP upgrade first, which this server rejects");
-				
-				// Check if server detected HTTP upgrade attempt
-				if (plainWsServer.wasHttpUpgradeAttempted()) {
-					logger.info("✓ Server detected HTTP upgrade attempt (as expected)");
-					logger.info("✓ Server rejected the connection because it doesn't support HTTP upgrade");
-					logger.info("✓ This proves Java HttpClient ALWAYS tries HTTP upgrade for ws:// URIs");
-				}
-				
-				// This is the expected behavior - document it
-				logger.info("\n=== TEST CONCLUSION ===");
-				logger.info("FINDING: Java HttpClient ALWAYS attempts HTTP upgrade for ws:// URIs");
-				logger.info("         It cannot connect to servers that ONLY support plain WebSocket protocol");
-				logger.info("         There is no way to tell the client to skip HTTP upgrade");
-				logger.info("         The WebSocket RFC 6455 specifies HTTP upgrade is the standard mechanism");
-				
-				// Assert that HTTP upgrade was attempted (which is what we're documenting)
-				assertTrue(plainWsServer.wasHttpUpgradeAttempted(), 
-					"Java HttpClient should attempt HTTP upgrade for WebSocket connections");
-				
-			} else if (opened && webSocket != null) {
-				// Connection succeeded - this would be surprising!
-				logger.info("=== CONNECTION SUCCEEDED (UNEXPECTED) ===");
+				throw new AssertionError("WebSocket connection failed: " + errorRef.get().getMessage(), errorRef.get());
+			}
+			
+			if (opened && webSocket != null) {
+				// Connection succeeded!
+				logger.info("=== CONNECTION SUCCEEDED ===");
 				assertNotNull(webSocket, "WebSocket should be established");
 				logger.info("✓ WebSocket connection established successfully");
-				logger.info("This indicates the Java HttpClient was able to connect without HTTP upgrade");
+				
+				// Verify the handshake was completed on the server
+				assertTrue(plainWsServer.wasWebSocketHandshakeCompleted(), 
+					"Server should have completed WebSocket handshake");
+				logger.info("✓ Server completed WebSocket opening handshake");
 				
 				// Try to send a test message
 				logger.info("Sending test message...");
@@ -158,21 +148,23 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 				
 				// Wait for response
 				boolean received = messageLatch.await(10, TimeUnit.SECONDS);
-				if (received) {
-					logger.info("✓ Received response: {}", receivedMessage.get());
-					assertEquals("Plain Echo: Test message", receivedMessage.get(), 
-						"Should receive echoed message from plain WebSocket server");
-				} else {
-					logger.warn("Did not receive response from server");
-				}
+				assertTrue(received, "Should receive echo response from WebSocket server");
+				assertEquals("WebSocket-only Echo: Test message", receivedMessage.get(), 
+					"Should receive echoed message from WebSocket-only server");
+				logger.info("✓ Received response: {}", receivedMessage.get());
 				
 				// Close the connection
 				webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "Test complete").get(5, TimeUnit.SECONDS);
 				
-				// Verify no HTTP upgrade was performed
-				plainWsServer.assertNoHttpUpgrade();
+				// Verify server behavior
+				plainWsServer.assertWebSocketHandshakeCompleted();
 				
-				logger.info("=== TEST PASSED: Plain WebSocket connection works ===");
+				logger.info("\n=== TEST CONCLUSION ===");
+				logger.info("✓ Java HttpClient sends WebSocket opening handshake (uses HTTP/1.1 syntax)");
+				logger.info("✓ WebSocket-only server accepts the handshake");
+				logger.info("✓ Connection established and messages exchanged successfully");
+				logger.info("✓ This demonstrates RFC 6455 Section 1.7: WebSocket handshake uses HTTP-like syntax");
+				logger.info("   but is part of the WebSocket protocol, not HTTP");
 			} else {
 				logger.error("Connection did not open within timeout");
 				throw new AssertionError("WebSocket connection did not open within timeout");
@@ -180,32 +172,13 @@ public class JavaHttpClientWebSocketTest extends JavaHttpClientBase {
 			
 		} catch (Exception e) {
 			// Document what happened
-			logger.error("=== EXCEPTION DURING CONNECTION (EXPECTED BEHAVIOR) ===");
+			logger.error("=== EXCEPTION DURING CONNECTION ===");
 			logger.error("Exception type: {}", e.getClass().getName());
 			logger.error("Exception message: {}", e.getMessage());
-			
-			if (plainWsServer.wasHttpUpgradeAttempted()) {
-				logger.info("✓ Server detected HTTP upgrade attempt");
-				logger.info("✓ This proves Java HttpClient tries HTTP upgrade even for plain WebSocket servers");
-				logger.info("✓ The server rejected the connection as it doesn't support HTTP upgrade");
-				logger.info("");
-				logger.info("FINDING: Java HttpClient ALWAYS attempts HTTP upgrade for ws:// URIs");
-				logger.info("         It cannot connect to servers that ONLY support plain WebSocket protocol");
-				logger.info("         There is no way to tell the client to skip HTTP upgrade");
-				logger.info("         This is correct behavior per RFC 6455 - WebSocket requires HTTP upgrade");
-				
-				// This is expected behavior - assert that HTTP upgrade was attempted
-				assertTrue(plainWsServer.wasHttpUpgradeAttempted(), 
-					"Java HttpClient should attempt HTTP upgrade for WebSocket connections");
-			} else {
-				logger.error("✗ Connection failed but server didn't detect HTTP upgrade attempt");
-				logger.error("✗ This suggests a different connection failure");
-				throw new AssertionError(
-					"Connection failed but HTTP upgrade was not attempted. Unexpected failure mode.", e);
-			}
+			throw e;
 		}
 
-		logger.info("=== Direct WebSocket connection test completed ===\n");
+		logger.info("=== WebSocket-only server connection test completed ===\n");
 	}
 
 	@Test

@@ -60,18 +60,18 @@ Client                    Server
 
 When establishing a WebSocket connection:
 
-1. **HTTP Handshake**: Connection starts with an HTTP/1.1 request using the `Upgrade` header
-2. **Protocol Upgrade**: Server responds with 101 Switching Protocols if it accepts the upgrade
-3. **WebSocket Protocol**: After upgrade, the connection uses the WebSocket protocol with standardized framing
+1. **WebSocket Opening Handshake**: Connection starts with a request using HTTP/1.1 syntax with `Upgrade: websocket` header
+2. **Handshake Response**: Server responds with 101 Switching Protocols if it accepts the handshake
+3. **WebSocket Protocol**: After handshake completes, the connection uses WebSocket framing protocol
 4. **Control Frames**: Built-in support for ping/pong (keep-alive), close handshake, and connection management
 5. **Message Framing**: Automatic handling of message fragmentation and reassembly
-6. **Proxy/Firewall Compatible**: Works over standard HTTP ports (80/443) and can traverse HTTP proxies
+6. **Proxy/Firewall Compatible**: Works over standard HTTP ports (80/443) and can traverse HTTP proxies (since the handshake looks like HTTP to intermediaries)
 
 Example WebSocket connection flow:
 ```
 Client                    Server
   |                         |
-  |-- HTTP Upgrade Req. -->|
+  |-- WS Handshake Req. -->|  (looks like HTTP to proxies)
   |                         |
   |<- 101 Switching Prot. -|
   |                         |
@@ -85,20 +85,24 @@ Client                    Server
 
 ### Key Advantages of WebSocket over Raw TCP
 
-1. **Standardized Protocol**: WebSocket provides a well-defined protocol for framing, control messages, and error handling
-2. **HTTP Compatibility**: Can traverse HTTP infrastructure (proxies, load balancers, firewalls)
+1. **Standardized Protocol**: WebSocket provides a well-defined protocol for opening handshake, framing, control messages, and error handling
+2. **Infrastructure Compatibility**: The opening handshake uses HTTP-like syntax, allowing it to traverse HTTP proxies, load balancers, and firewalls
 3. **Security**: WSS (WebSocket Secure) provides TLS encryption, similar to HTTPS
 4. **Origin-Based Security**: Built-in origin checking to prevent unauthorized cross-origin connections
 5. **Masking**: Client-to-server messages are masked to prevent cache poisoning attacks on proxies
 6. **Automatic Fragmentation**: Large messages are automatically fragmented and reassembled
 
-## The HTTP Upgrade Process
+## The WebSocket Opening Handshake
 
-WebSocket achieves compatibility with HTTP infrastructure by using the HTTP `Upgrade` mechanism defined in [RFC 7230 Section 6.7](https://datatracker.ietf.org/doc/html/rfc7230#section-6.7). This allows a connection to transition from HTTP to WebSocket protocol.
+As specified in [RFC 6455 Section 1.7](https://datatracker.ietf.org/doc/html/rfc6455#section-1.7):
+
+> The WebSocket Protocol is an independent TCP-based protocol. Its only relationship to HTTP is that its handshake is interpreted by HTTP servers as an Upgrade request.
+
+This is a crucial distinction: **the WebSocket opening handshake uses HTTP-like syntax, but it is part of the WebSocket protocol itself, not HTTP**. When a connection is made to a port shared with an HTTP server (common for ports 80 and 443), the handshake appears to the HTTP server as a regular GET request with an Upgrade offer. However, a WebSocket-only server (that doesn't support general HTTP) can and should still handle the WebSocket opening handshake.
 
 ### WebSocket Handshake Request
 
-The client initiates a WebSocket connection by sending an HTTP/1.1 request with specific headers:
+The client initiates a WebSocket connection by sending a request that uses HTTP/1.1 syntax:
 
 ```http
 GET /chat HTTP/1.1
@@ -110,10 +114,10 @@ Sec-WebSocket-Version: 13
 Origin: http://example.com
 ```
 
-Key headers:
+Key headers (part of WebSocket opening handshake):
 
-- **`Upgrade: websocket`**: Requests protocol upgrade to WebSocket
-- **`Connection: Upgrade`**: Indicates this is an upgrade request
+- **`Upgrade: websocket`**: Indicates this is a WebSocket opening handshake (appears as an upgrade request to HTTP servers)
+- **`Connection: Upgrade`**: Indicates the connection will switch protocols
 - **`Sec-WebSocket-Key`**: A randomly generated base64-encoded value (16 bytes) used for handshake verification
 - **`Sec-WebSocket-Version`**: WebSocket protocol version (13 is the current standard)
 - **`Origin`**: The origin of the script establishing the connection (for security)
@@ -125,7 +129,7 @@ Optional headers:
 
 ### WebSocket Handshake Response
 
-If the server accepts the WebSocket connection, it responds with:
+If the server accepts the WebSocket connection, it responds with HTTP-like syntax:
 
 ```http
 HTTP/1.1 101 Switching Protocols
@@ -150,12 +154,21 @@ This prevents accidentally accepting WebSocket connections by HTTP servers that 
 
 ### After the Handshake
 
-Once the handshake is complete:
+Once the WebSocket opening handshake is complete:
 
-1. The HTTP request/response exchange is finished
-2. The TCP connection remains open but switches to WebSocket protocol
+1. The connection switches from HTTP-like handshake to WebSocket framing protocol
+2. The TCP connection remains open and uses the WebSocket protocol
 3. Both client and server can send WebSocket frames at any time
 4. The connection remains open until either side sends a Close frame or the TCP connection is terminated
+
+### Important Distinction: WebSocket vs HTTP
+
+**Key Point**: The WebSocket opening handshake uses HTTP/1.1 syntax, but this is part of the WebSocket protocol specification, not HTTP. A server that implements ONLY WebSocket protocol:
+- **MUST** handle the WebSocket opening handshake (which looks like an HTTP request)
+- **MAY** reject other HTTP requests that are not WebSocket handshakes
+- Does not need to be a general-purpose HTTP server
+
+When the connection is to a port shared with an HTTP server, the HTTP server interprets the handshake as an Upgrade request. But for a WebSocket-only server, the handshake is simply the defined way to establish a WebSocket connection.
 
 ### Why HTTP Ports 80 and 443?
 
@@ -326,28 +339,32 @@ Always validate and sanitize data received over WebSocket connections, just as y
 - Real-time, low-latency updates are critical
 - You want to minimize connection establishment overhead for frequent messages
 
-## Java HttpClient Behavior with Plain WebSocket Servers
+## Java HttpClient WebSocket Behavior
 
 ### Testing Results
 
-The test suite in this repository includes tests that demonstrate how Java's HttpClient handles different WebSocket server configurations:
+The test suite in this repository includes tests that demonstrate how Java's HttpClient handles WebSocket connections:
 
-1. **HTTP Upgrade Support (Standard Behavior)**
+1. **Standard WebSocket Connection**
    - Test: `testWebSocketUpgradeAfterHttp2`
-   - The client successfully connects to servers that support HTTP upgrade
+   - The client successfully connects to servers that implement the WebSocket opening handshake
    - This is the standard WebSocket connection mechanism per RFC 6455
 
-2. **Plain WebSocket Without HTTP Upgrade**
+2. **WebSocket-Only Server (No General HTTP Support)**
    - Test: `testDirectWebSocketConnection`
-   - This test demonstrates what happens when a server ONLY supports plain WebSocket protocol without HTTP upgrade
-   - **Finding**: Java HttpClient ALWAYS attempts HTTP upgrade for ws:// URIs
-   - The client cannot connect to servers that don't support HTTP upgrade
-   - There is no way to configure the client to skip HTTP upgrade
-   - **This is correct behavior per RFC 6455**, which specifies HTTP upgrade as the standard mechanism
+   - This test demonstrates how Java HttpClient connects to a WebSocket-only server
+   - **Finding**: Java HttpClient sends the WebSocket opening handshake (which uses HTTP/1.1 syntax)
+   - A proper WebSocket server MUST handle this handshake, even if it doesn't support general HTTP requests
+   - The server SHOULD accept WebSocket handshakes but MAY reject other HTTP requests
 
 ### Key Takeaway
 
-If you're implementing a WebSocket server to work with Java's HttpClient (or most standard WebSocket clients), you **must** implement the HTTP upgrade mechanism. A plain WebSocket protocol without HTTP upgrade will not work with standard WebSocket clients, as they always initiate the connection with an HTTP upgrade request.
+If you're implementing a WebSocket server to work with Java's HttpClient (or any standard WebSocket client), you **must** implement the WebSocket opening handshake as specified in RFC 6455. This handshake uses HTTP/1.1 syntax but is part of the WebSocket protocol itself:
+
+- The handshake looks like: `GET /path HTTP/1.1` with `Upgrade: websocket` header
+- This is NOT HTTP - it's the WebSocket opening handshake using HTTP-like syntax
+- A WebSocket-only server handles this handshake without being a general HTTP server
+- After the handshake completes, all communication uses WebSocket frames
 
 ## References
 
