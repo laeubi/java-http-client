@@ -127,6 +127,13 @@ Local results on Linux x86-64, Eclipse Temurin, Maven 3.10.0:
 The repository CI pins Temurin `17.0.17` and `21.0.8`; this table records actual
 local builds, not assumed results from the CI configuration.
 
+Full `mvn -B clean package` runs on `17.0.17+10` and `21.0.8+9-LTS`
+each ran 40 tests: 39 passed, with the unchanged
+`JavaHttpClientUpgradeTest.testHttp2WithCustomSSLParametersALPNAttempt` failing
+(expected HTTP/2, received HTTP/1.1). That existing test also failed in isolation
+on both builds. All six timeout test methods passed in both full-suite runs;
+the unrelated ALPN test is not modified here.
+
 Coverage is **cleartext HTTP/1.1**, using the JDK built-in client. HTTPS,
 HTTP/2, HTTP/3, other vendors, custom subscribers with unusual completion
 semantics, and every Java 11–25 update build are **not** established by this
