@@ -1,6 +1,6 @@
 # Java HTTP Client Testing
 
-Check of Java HTTP Client Limitations with HTTP/2, GOAWAY frames, HTTP Compression, HTTP Caching, and HTTP Authentication
+Check of Java HTTP Client Limitations with HTTP/2, GOAWAY frames, HTTP Compression, HTTP Caching, HTTP Authentication, and Response-Body Timeouts
 
 ## Overview
 
@@ -12,6 +12,7 @@ This project tests Java 11+ HTTP Client behavior with HTTP/2 protocol features, 
 - HTTP compression support (or lack thereof)
 - HTTP caching support (or lack thereof)
 - HTTP authentication schemes support (Basic, Digest, NTLM, SPNEGO/Kerberos)
+- Response-body stall timeout behavior (version-dependent; request/body deadline extended in JDK 26)
 
 ## Test Scenarios
 
@@ -112,7 +113,21 @@ The tests demonstrate that:
 
 See [GITHUB_ISSUE_SUMMARY.md](GITHUB_ISSUE_SUMMARY.md) for a concise summary suitable for submitting as a JDK enhancement request.
 
+### 10. Response-Body Stall Timeouts
+
+Tests in `JavaHttpClientTimeoutTest` use a synchronized local server that flushes headers, optionally sends a partial body, and leaves the response incomplete:
+- `testAsyncStringBodyStalls()` and `testAsyncByteArrayBodyStalls()` - Observe stalled aggregating consumers
+- `testSynchronousBodyStalls()` - Observe synchronous `send` with bounded worker cleanup
+- `testInputStreamResponseCompletesBeforeRead()` - Distinguish response availability from later body reads
+- `testRequestTimeoutBeforeHeaders()` and `testCompletedResponse()` - Timeout and successful-response controls
+
+Older tested JDKs leave body consumers pending beyond the request deadline. **JDK 26 extends the request timeout through body consumption**, but this is an overall deadline, not a progress-resetting read-idle timeout. See [HTTP_TIMEOUTS.md](HTTP_TIMEOUTS.md) for exact tested builds, evidence, cleanup, and workarounds.
+
 ## Known Limitations
+
+### Response-Body Stalls on Older JDK Builds
+
+On the older builds reproduced in [HTTP_TIMEOUTS.md](HTTP_TIMEOUTS.md), connect and request timeouts do not bound a body that stalls after response headers. JDK 26 fixes the request deadline's scope; an independent body read-idle timeout remains a separate requirement. Applications can enforce external deadlines with explicit cancellation/stream closure. The tests accept fixes/backports instead of unconditionally asserting the old limitation on future JDKs.
 
 ### Custom SSLParameters Interfere with HTTP/2
 
@@ -187,6 +202,7 @@ mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 │   ├── JavaHttpClientCompressionTest.java # HTTP compression tests
 │   ├── JavaHttpClientCachingTest.java # HTTP caching tests
 │   ├── JavaHttpClientAuthenticationTest.java # HTTP authentication tests
+│   ├── JavaHttpClientTimeoutTest.java # Version-dependent body stall timeout tests and local fixture
 │   └── JavaHttpClientBase.java        # Base test class with utilities
 ├── src/main/resources/
 │   └── simplelogger.properties        # Logging configuration
@@ -195,6 +211,7 @@ mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 ├── HTTP_COMPRESSION.md                # HTTP compression documentation
 ├── HTTP_CACHING.md                    # HTTP caching documentation
 ├── HTTP_AUTHENTICATION.md             # HTTP authentication documentation
+├── HTTP_TIMEOUTS.md                   # Response-body timeout evidence and JDK 26 caveat
 ├── GITHUB_ISSUE_SUMMARY.md            # JDK enhancement request summary
 └── pom.xml                            # Maven project configuration
 ```
